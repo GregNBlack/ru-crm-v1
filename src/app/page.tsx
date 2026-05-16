@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { HomeContent } from "./home-content"
 
 export const metadata: Metadata = {
-  title: "truffalo.ai",
-  description: "AI-native business operating system",
+  title: "Business Operating System",
+  description: "Demo web application",
 }
 
 export default function Home() {

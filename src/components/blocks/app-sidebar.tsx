@@ -82,14 +82,14 @@ export function AppSidebar({ session }: { session: AuthSession }) {
           {open ? (
             <div className="flex flex-row gap-3 items-center justify-center">
               <Image
-                src="/TP_golden_icon_small.jpg"
+                src="/logo.png"
                 alt="Logo"
                 width={28}
                 height={28}
                 className="mt-1 rounded-full"
               />
               <h1 className="text-xl font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
-                truffalo.ai
+                business OS
               </h1>
             </div>
           ) : (

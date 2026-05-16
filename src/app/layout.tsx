@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "truffalo.ai",
-  description: "truffalo.ai web app",
+  title: "AI-native Business Operating System",
+  description: "Demo web application",
 }
 
 export default function RootLayout({

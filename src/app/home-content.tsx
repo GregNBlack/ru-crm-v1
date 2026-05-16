@@ -36,15 +36,14 @@ export function HomeContent() {
         <div className="h-auto w-95 flex flex-col items-center justify-center p-4">
           <div className="flex flex-col p-12 pb-4 h-full items-center justify-center">
             <Image
-              src="/TP_golden_nobg.png"
+              src="/logo.png"
               alt="Logo"
-              width={260}
-              height={260}
+              width={300}
+              height={300}
               loading="eager"
+              className="rounded-2xl"
             />
-            <p className="text-6xl font-bold mt-4 bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
-              truffalo.ai
-            </p>
+            <p className="text-6xl font-bold mt-4 bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent"></p>
           </div>
 
           <div className="flex flex-col p-12 pt-4 items-center justify-center">
