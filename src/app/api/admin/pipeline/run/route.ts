@@ -9,7 +9,7 @@ import { runDailyPipeline } from "@/server/orchestration/daily-pipeline"
 // maxDuration is generous because phase 2 (parse) can chew through up
 // to `maxParsePerRun` items, some of which are videos. In practice the
 // workflow path should be preferred for any large run.
-export const maxDuration = 800
+export const maxDuration = 300
 
 export async function POST() {
   const session = await getServerSession()
