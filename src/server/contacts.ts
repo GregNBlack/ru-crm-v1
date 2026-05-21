@@ -9,6 +9,7 @@ import { randomUUID } from "crypto"
 export type ContactRow = {
   id: string
   name: string
+  nameNative: string | null
   phone: string | null
   email: string | null
   position: string | null
@@ -78,6 +79,7 @@ export async function listContacts(): Promise<ContactRow[]> {
   return rows.map((r) => ({
     id: r.contact.id,
     name: r.contact.name,
+    nameNative: r.contact.nameNative,
     phone: r.contact.phone,
     email: r.contact.email,
     position: r.contact.position,
@@ -111,6 +113,7 @@ export async function listClientOptions(): Promise<ClientOption[]> {
 
 export async function createContact(data: {
   name: string
+  nameNative?: string | null
   phone?: string | null
   email?: string | null
   position?: string | null
@@ -127,6 +130,7 @@ export async function createContact(data: {
   await db.insert(contact).values({
     id,
     name: data.name.trim(),
+    nameNative: data.nameNative?.trim() || null,
     phone: data.phone?.trim() || null,
     email: data.email?.trim() || null,
     position: data.position?.trim() || null,
@@ -144,6 +148,7 @@ export async function updateContact(
   contactId: string,
   data: {
     name?: string
+    nameNative?: string | null
     phone?: string | null
     email?: string | null
     position?: string | null
@@ -165,6 +170,9 @@ export async function updateContact(
     .update(contact)
     .set({
       ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+      ...(data.nameNative !== undefined
+        ? { nameNative: data.nameNative?.trim() || null }
+        : {}),
       ...(data.phone !== undefined
         ? { phone: data.phone?.trim() || null }
         : {}),

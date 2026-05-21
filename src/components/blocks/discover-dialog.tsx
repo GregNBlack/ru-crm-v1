@@ -120,7 +120,10 @@ export function DiscoverDialog({
         setClientChecked(c)
 
         const ct: Record<string, boolean> = {}
-        for (const cand of dp.contactCandidates) ct[cand.email] = true
+        // Pre-uncheck likely duplicates so they aren't created by default —
+        // the operator opts in after reviewing the flagged match.
+        for (const cand of dp.contactCandidates)
+          ct[cand.email] = !cand.possibleDuplicate
         setContactChecked(ct)
         setContactNameOverrides({})
 
@@ -249,6 +252,8 @@ export function DiscoverDialog({
               clients: preview.clientCandidates,
               contacts: preview.contactCandidates,
             },
+            nativeNames: preview.nativeNames,
+            phones: preview.phones,
           }),
         })
         const data = await res.json()
@@ -597,9 +602,16 @@ function ContactRow({
           className="h-8 text-sm font-medium"
         />
         <div className="text-xs text-muted-foreground truncate">
-          {candidate.email} · mentioned in {candidate.occurrences} item
+          {candidate.email}
+          {candidate.nativeName ? ` · ${candidate.nativeName}` : ""} · mentioned
+          in {candidate.occurrences} item
           {candidate.occurrences === 1 ? "" : "s"}
         </div>
+        {candidate.possibleDuplicate && (
+          <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+            Possible duplicate of {candidate.possibleDuplicate.name}
+          </Badge>
+        )}
       </div>
     </div>
   )

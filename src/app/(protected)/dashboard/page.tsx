@@ -37,7 +37,7 @@ function DashboardContent() {
       </div>
 
       {/* Chat + Detail Panel area */}
-      <div className="w-full max-w-7xl h-[40vh] min-h-75 flex gap-4 px-4">
+      <div className="w-full max-w-7xl h-[40vh] min-h-130 flex gap-4 px-4">
         {/* Chat column */}
         <div
           className={`flex-1 min-h-0 transition-all duration-300 ${

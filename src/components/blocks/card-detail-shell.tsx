@@ -39,12 +39,22 @@ const CATEGORY_LABEL: Record<CardCategory, string> = {
   client_activity: "Client activity",
   colleagues_activity: "Colleagues activity",
   business_info: "Business info",
+  action_required: "Action required",
+  ambiguity: "Ambiguity",
+  data_intelligence: "Data intelligence",
+  momentum: "Momentum",
+  log_only: "Log only",
 }
 
 const CATEGORY_COLOR: Record<CardCategory, string> = {
   client_activity: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
   colleagues_activity: "bg-purple-500/15 text-purple-600 dark:text-purple-300",
   business_info: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  action_required: "bg-red-500/15 text-red-600 dark:text-red-300",
+  ambiguity: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  data_intelligence: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300",
+  momentum: "bg-teal-500/15 text-teal-600 dark:text-teal-300",
+  log_only: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300",
 }
 
 const PRIORITY_COLOR: Record<CardPriority, string> = {

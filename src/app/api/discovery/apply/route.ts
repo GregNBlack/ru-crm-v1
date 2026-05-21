@@ -41,6 +41,8 @@ export async function POST(request: NextRequest) {
       selectedLinks: body.selectedLinks,
       scannedRowIds: body.scannedRowIds,
       candidates: body.candidates,
+      nativeNames: body.nativeNames ?? [],
+      phones: body.phones ?? [],
     })
     return NextResponse.json(result)
   } catch (error) {

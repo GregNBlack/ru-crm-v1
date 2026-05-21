@@ -137,6 +137,7 @@ export async function getClientDetail(
     contacts: contactRows.map(({ contact: c, userName: cu }) => ({
       id: c.id,
       name: c.name,
+      nameNative: c.nameNative,
       phone: c.phone,
       email: c.email,
       position: c.position,

@@ -16,6 +16,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
+import {
   Building2,
   Check,
   FileText,
@@ -36,12 +41,22 @@ const CATEGORY_LABEL: Record<CardCategory, string> = {
   client_activity: "Client activity",
   colleagues_activity: "Colleagues activity",
   business_info: "Business info",
+  action_required: "Action required",
+  ambiguity: "Ambiguity",
+  data_intelligence: "Data intelligence",
+  momentum: "Momentum",
+  log_only: "Log only",
 }
 
 const CATEGORY_COLOR: Record<CardCategory, string> = {
   client_activity: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
   colleagues_activity: "bg-purple-500/15 text-purple-600 dark:text-purple-300",
   business_info: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  action_required: "bg-red-500/15 text-red-600 dark:text-red-300",
+  ambiguity: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  data_intelligence: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300",
+  momentum: "bg-teal-500/15 text-teal-600 dark:text-teal-300",
+  log_only: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300",
 }
 
 const PRIORITY_COLOR: Record<CardPriority, string> = {
@@ -55,6 +70,47 @@ const PRIORITY_GRADIENT: Record<CardPriority, string> = {
   normal:
     "bg-linear-to-b from-slate-200 via-slate-100/60 to-card dark:from-slate-500/50 dark:via-slate-800/30 dark:to-card",
   high: "bg-linear-to-b from-amber-100 via-amber-100/70 to-card dark:from-amber-600/40 dark:via-amber-900/30 dark:to-card",
+}
+
+// A message field (Analysis / Recommendation) shown clamped to 3 lines on
+// the card, with the FULL text revealed in a hover-card on hover, keyboard
+// focus, or click — so long messages are readable without opening the card
+// details page. The content is portaled, so it escapes the card's fixed
+// height + overflow-hidden.
+function MessageField({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+        {label}
+      </div>
+      <HoverCard
+        open={open}
+        onOpenChange={setOpen}
+        openDelay={150}
+        closeDelay={100}
+      >
+        <HoverCardTrigger asChild>
+          <p
+            tabIndex={0}
+            onClick={() => setOpen((o) => !o)}
+            className="leading-relaxed line-clamp-3 whitespace-pre-wrap cursor-pointer rounded -mx-1 px-1 transition-colors hover:bg-muted/40 focus:bg-muted/40 outline-hidden"
+          >
+            {text}
+          </p>
+        </HoverCardTrigger>
+        <HoverCardContent
+          align="start"
+          className="w-96 max-h-80 overflow-y-auto"
+        >
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+            {label}
+          </div>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+        </HoverCardContent>
+      </HoverCard>
+    </div>
+  )
 }
 
 function formatDate(iso: string): string {
@@ -196,25 +252,9 @@ export function DashboardCard({
 
       <CardContent className="flex-1 min-h-0 flex flex-col gap-3 text-sm overflow-hidden">
         <div className="space-y-2 min-h-0">
-          {analysis && (
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
-                Analysis
-              </div>
-              <p className="leading-relaxed line-clamp-3 whitespace-pre-wrap">
-                {analysis}
-              </p>
-            </div>
-          )}
+          {analysis && <MessageField label="Analysis" text={analysis} />}
           {recommendation && (
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
-                Recommendation
-              </div>
-              <p className="leading-relaxed line-clamp-3 whitespace-pre-wrap">
-                {recommendation}
-              </p>
-            </div>
+            <MessageField label="Recommendation" text={recommendation} />
           )}
           {!analysis && !recommendation && (
             <p className="text-muted-foreground italic">No message content.</p>

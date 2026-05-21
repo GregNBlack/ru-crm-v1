@@ -240,7 +240,16 @@ export const contact = pgTable(
   "contact",
   {
     id: text("id").primaryKey(),
+    // Technical / envelope name — for email contacts this is the admin-defined
+    // display name from the message envelope (often English/romanized). Stable
+    // identity; what address books match on. Set by discovery + manual create.
     name: text("name").notNull(),
+    // Native-language name extracted from email body content (signature,
+    // sign-off, letterhead) by the parser, in its original script (German,
+    // Chinese, …). Nullable — only populated when the parser confidently pairs
+    // a body name to this contact's envelope email. See
+    // `metadata_json.participantNativeNames` + `applyDiscovery`.
+    nameNative: text("name_native"),
     phone: text("phone"),
     email: text("email"),
     position: text("position"),
@@ -454,6 +463,11 @@ export const cardCategory = pgEnum("card_category", [
   "client_activity",
   "colleagues_activity",
   "business_info",
+  "action_required",
+  "ambiguity",
+  "data_intelligence",
+  "momentum",
+  "log_only",
 ])
 
 export type CardCategory = (typeof cardCategory.enumValues)[number]

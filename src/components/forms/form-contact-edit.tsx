@@ -41,6 +41,7 @@ const NO_CLIENT = "__none__"
 
 type ContactFormData = {
   name: string
+  nameNative: string
   phone: string
   email: string
   position: string
@@ -68,6 +69,7 @@ export default function ContactEditDialog({
   const form = useForm<ContactFormData>({
     defaultValues: {
       name: contact?.name ?? "",
+      nameNative: contact?.nameNative ?? "",
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
@@ -80,6 +82,7 @@ export default function ContactEditDialog({
     if (!open) return
     form.reset({
       name: contact?.name ?? "",
+      nameNative: contact?.nameNative ?? "",
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
@@ -138,20 +141,40 @@ export default function ContactEditDialog({
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              rules={{ required: "Name is required" }}
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-gray-400">Name *</FormLabel>
-                  <FormControl>
-                    <Input {...field} placeholder="Contact name" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <FormField
+                control={form.control}
+                name="name"
+                rules={{ required: "Name is required" }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-gray-400">Name *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Contact name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="nameNative"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-gray-400">
+                      Native name
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder="Local-language name (e.g. 张伟)"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <FormField

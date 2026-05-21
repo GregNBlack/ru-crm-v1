@@ -27,6 +27,11 @@ export function ContactCard({
       <CardHeader className="flex flex-row items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <CardTitle className="truncate">{contact.name}</CardTitle>
+          {contact.nameNative && contact.nameNative !== contact.name && (
+            <div className="text-sm text-muted-foreground truncate">
+              {contact.nameNative}
+            </div>
+          )}
           {contact.position && (
             <div className="mt-1 text-sm text-muted-foreground truncate">
               {contact.position}

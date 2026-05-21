@@ -88,7 +88,7 @@ export function AppSidebar({ session }: { session: AuthSession }) {
                 height={28}
                 className="mt-1 rounded-full"
               />
-              <h1 className="text-xl font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
+              <h1 className="text-lg font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
                 business OS
               </h1>
             </div>

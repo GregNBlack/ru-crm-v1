@@ -34,6 +34,13 @@ export type MetadataAnalysis = {
   // filterMentionedPeople). Read by discovery.ts as a third participant
   // source after canonical participants + Nylas envelope.
   mentionedPeople: MentionedPerson[]
+  // Details recovered for ENVELOPE participants from the body, paired to
+  // their email by the parser's LLM: native-language name (signature /
+  // sign-off / letterhead) and phone number. Email-specific — only
+  // `text.ts` populates this today, so it's optional; other parsers omit
+  // the key. Discovery uses it to set `contact.name_native` + `contact.phone`.
+  // See filterParticipantDetails.
+  participantDetails?: ParticipantDetail[]
 }
 
 // A third party referenced inside the body of a source item (not the
@@ -44,6 +51,7 @@ export type MentionedPerson = {
   name: string
   email: string // empty when not quoted in the body
   organization: string // empty when no clear attribution
+  phone: string // empty when no phone is quoted in the body
   confidence: "high" | "medium"
 }
 
@@ -63,6 +71,11 @@ export const mentionedPersonSchema = z.object({
     .describe(
       "Company name explicitly attributed to this person in the body (e.g. 'CEO of Acme', 'Acme's John'). Or, for a 'medium' confidence mention, the author/sender's organization when context makes the affiliation clear ('my colleague Jane'). Empty string when no clear attribution.",
     ),
+  phone: z
+    .string()
+    .describe(
+      "Phone number QUOTED in the body for this person, exactly as written (keep the country code / formatting). Empty string when no phone is present. Never fabricate or guess.",
+    ),
   confidence: z
     .enum(["high", "medium"])
     .describe(
@@ -70,13 +83,29 @@ export const mentionedPersonSchema = z.object({
     ),
 })
 
+// Light phone cleanup (no E.164 normalisation): trim, drop characters that
+// can't appear in a dialable number, collapse whitespace. Returns "" when
+// fewer than 7 digits survive (implausible as a phone number). We store the
+// number close to as-written so the local formatting is preserved.
+export function cleanPhone(raw: string): string {
+  const s = (raw ?? "").trim()
+  if (!s) return ""
+  const cleaned = s
+    .replace(/[^\d+()\-.\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  const digitCount = (cleaned.match(/\d/g) ?? []).length
+  return digitCount >= 7 ? cleaned : ""
+}
+
 // Reusable system-prompt clause. Each parser appends this PLUS a short
 // provider-specific addendum naming who the author/sender is (so the LLM
 // knows who NOT to include and where to source the medium-confidence
 // org inference). See refs spec § "Per-parser specifics".
-export const MENTIONED_PEOPLE_PROMPT = `Beyond the author/sender, scan the body for people EXPLICITLY mentioned who are likely real CRM contacts. For each, emit one entry in mentionedPeople with {name, email, organization, confidence}:
+export const MENTIONED_PEOPLE_PROMPT = `Beyond the author/sender, scan the body for people EXPLICITLY mentioned who are likely real CRM contacts. For each, emit one entry in mentionedPeople with {name, email, organization, phone, confidence}:
 
 - Quote email verbatim from the body if present; otherwise empty string. NEVER invent or guess an email.
+- Quote phone verbatim from the body if a phone number is given for this person (e.g. on a business card or in a signature), keeping its formatting; otherwise empty string. NEVER invent or guess a phone number.
 - Set organization to a company explicitly attributed to the person in the body (e.g. "CEO of Acme", "Acme's John Smith"). If the body doesn't attribute them but they're clearly part of the author/sender's own organization (e.g. "my colleague Jane", "our team's Alex"), set organization to the author's company and use confidence="medium".
 - Use confidence="high" only when EITHER the email is quoted OR an explicit org attribution exists. Use confidence="medium" for the author-org-inferred case. OMIT the person entirely if neither applies (i.e. a bare name with no email and no clear affiliation).
 - Do not include the author/sender themselves — they're captured elsewhere.`
@@ -102,10 +131,84 @@ export function filterMentionedPeople(
       name: (p.name ?? "").trim(),
       email,
       organization: (p.organization ?? "").trim(),
+      phone: cleanPhone(p.phone ?? ""),
       confidence: "high",
     })
   }
   return out
+}
+
+// Details recovered for an envelope participant from the body, paired to
+// their email by the LLM. `email` MUST be one of the envelope addresses;
+// `nativeName` is written in its original script (not romanized/translated);
+// `phone` is quoted from the body (signature). Either enrichment may be empty.
+export type ParticipantDetail = {
+  email: string
+  nativeName: string
+  phone: string
+}
+
+export const participantDetailSchema = z.object({
+  email: z
+    .string()
+    .describe(
+      "The envelope email address (From/To/Cc/Bcc, as listed in the prompt) these details belong to. Must be one of those addresses — never a body-only address.",
+    ),
+  nativeName: z
+    .string()
+    .describe(
+      "The person's real name as written in the body in its ORIGINAL script/language (e.g. the German or Chinese form from a signature or sign-off). Do not romanize, translate, or reformat. Empty string if you can't find a body name for this address.",
+    ),
+  phone: z
+    .string()
+    .describe(
+      "The phone number quoted in the body for this address (signature / contact block), exactly as written. Empty string if no phone is present. Never fabricate.",
+    ),
+})
+
+// Reusable system-prompt clause for envelope-participant detail extraction.
+// Email-specific: the envelope carries a technical/English display name while
+// the writer's real name + phone appear in the body. Appended to text.ts.
+export const PARTICIPANT_DETAILS_PROMPT = `Separately, recover extra details for the envelope participants from the body. The envelope From/To/Cc/Bcc addresses are listed above with their technical display names — those are often English or romanized and set by mail admins, while the person's REAL name (and often a phone number) appears in the body (signature, sign-off like "Mit freundlichen Grüßen, …", contact block, letterhead).
+
+For each envelope address whose details you can confidently determine from the body, emit one entry in participantDetails with {email, nativeName, phone}:
+- \`email\` MUST be one of the envelope addresses listed above (typically the From: sender, who signs the message). Never a body-only address.
+- \`nativeName\` is the name exactly as written in the body, in its ORIGINAL script (German, Chinese, …). Do NOT romanize, translate, or reorder. Empty string if none.
+- \`phone\` is a phone number quoted in the signature/contact block for that address, exactly as written. Empty string if none. Never fabricate.
+- Only emit an entry when you're confident the name and/or phone belongs to that exact address. OMIT an address entirely if neither maps to it.`
+
+// v1 persist filter: keep entries whose email is an actual envelope address
+// (passed in) and that carry at least one usable detail (native name or a
+// plausible phone). Deduped by email (longest native name wins; first
+// plausible phone wins). Mirrors filterMentionedPeople's posture.
+export function filterParticipantDetails(
+  raw: ParticipantDetail[],
+  envelopeEmails: Set<string>,
+): ParticipantDetail[] {
+  const byEmail = new Map<string, { nativeName: string; phone: string }>()
+  for (const p of raw ?? []) {
+    if (!p) continue
+    const email = (p.email ?? "").trim().toLowerCase()
+    if (!email || !envelopeEmails.has(email)) continue
+    const nativeName = (p.nativeName ?? "").trim()
+    const phone = cleanPhone(p.phone ?? "")
+    if (!nativeName && !phone) continue
+    const existing = byEmail.get(email)
+    if (existing === undefined) {
+      byEmail.set(email, { nativeName, phone })
+    } else {
+      // Longest native name wins; first non-empty phone wins.
+      if (nativeName.length > existing.nativeName.length) {
+        existing.nativeName = nativeName
+      }
+      if (!existing.phone && phone) existing.phone = phone
+    }
+  }
+  return Array.from(byEmail.entries()).map(([email, d]) => ({
+    email,
+    nativeName: d.nativeName,
+    phone: d.phone,
+  }))
 }
 
 // Shape of the YAML frontmatter defined in refs/parsing-sources-template.md.

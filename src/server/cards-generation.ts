@@ -56,6 +56,11 @@ const cardOutputSchema = z.object({
     "COLLEAGUES_ACTIVITY",
     "BUSINESS_INFO",
     "COLLEAGUES_UPDATE",
+    "ACTION_REQUIRED",
+    "AMBIGUITY",
+    "DATA_INTELLIGENCE",
+    "MOMENTUM",
+    "LOG_ONLY",
   ]),
   message: z.object({
     analysis: z.string(),
@@ -74,6 +79,16 @@ function normaliseCategory(c: string): CardCategory {
     case "COLLEAGUES_ACTIVITY":
     case "COLLEAGUES_UPDATE":
       return "colleagues_activity"
+    case "ACTION_REQUIRED":
+      return "action_required"
+    case "AMBIGUITY":
+      return "ambiguity"
+    case "DATA_INTELLIGENCE":
+      return "data_intelligence"
+    case "MOMENTUM":
+      return "momentum"
+    case "LOG_ONLY":
+      return "log_only"
     default:
       throw new Error(`Unmapped category: ${c}`)
   }
@@ -464,7 +479,7 @@ Return JSON matching this exact shape (every field is required):
   {
     "relevant": boolean,
     "priority": "normal" | "high",
-    "category": "CLIENT_ACTIVITY" | "COLLEAGUES_ACTIVITY" | "BUSINESS_INFO",
+    "category": "CLIENT_ACTIVITY" | "COLLEAGUES_ACTIVITY" | "BUSINESS_INFO" | "ACTION_REQUIRED" | "AMBIGUITY" | "DATA_INTELLIGENCE" | "MOMENTUM" | "LOG_ONLY",
     "message": { "analysis": "...", "recommendation": "..." },
     "clients": ["..."],   // names from the Known clients list above; [] if none match
     "users":   ["..."]    // names from the Known users list above;   [] if none match

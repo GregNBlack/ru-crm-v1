@@ -10,8 +10,11 @@ import {
   emailsToDomainUrls,
   extractUrls,
   filterMentionedPeople,
+  filterParticipantDetails,
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
+  PARTICIPANT_DETAILS_PROMPT,
+  participantDetailSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -77,6 +80,11 @@ const analysisSchema = z.object({
     .array(mentionedPersonSchema)
     .describe(
       "People mentioned in the email body beyond the sender/recipients (third parties referenced by name). See the system prompt for emission rules.",
+    ),
+  participantDetails: z
+    .array(participantDetailSchema)
+    .describe(
+      "Details (native-language name + phone) for the envelope participants (From/To/Cc/Bcc), recovered from the body (signature / contact block). See the system prompt for emission rules.",
     ),
   contentMarkdown: z
     .string()
@@ -152,7 +160,9 @@ Extract structured metadata and convert the body to clean readable markdown. Nev
 
 ${MENTIONED_PEOPLE_PROMPT}
 
-For email specifically: the "author/sender" is the From: address; recipients (To/Cc/Bcc) are also captured elsewhere — don't include them in mentionedPeople either. Only mention third parties referenced inside the body. When inferring organization from the sender's affiliation, derive the sender's company from their email domain (e.g. sender alice@acme.com → "Acme" as the inferred org).`
+For email specifically: the "author/sender" is the From: address; recipients (To/Cc/Bcc) are also captured elsewhere — don't include them in mentionedPeople either. Only mention third parties referenced inside the body. When inferring organization from the sender's affiliation, derive the sender's company from their email domain (e.g. sender alice@acme.com → "Acme" as the inferred org).
+
+${PARTICIPANT_DETAILS_PROMPT}`
 
 export type ParsedSource = {
   markdown: string
@@ -314,6 +324,13 @@ export async function parseEmailMessage(
         reason: analysis.relevance.reason,
       },
       mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
+      // Native name + phone are only kept for actual envelope addresses
+      // (sender + recipients), lowercased to match how discovery keys
+      // participants.
+      participantDetails: filterParticipantDetails(
+        analysis.participantDetails ?? [],
+        new Set([...senders, ...recipients].map((e) => e.trim().toLowerCase())),
+      ),
     },
   }
 }

@@ -12,6 +12,7 @@ import {
   extractWebsiteDomain,
   isFreemailDomain,
 } from "@/lib/email-domain"
+import { cleanPhone } from "@/server/parsers/_shared"
 import { randomUUID } from "crypto"
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -35,15 +36,37 @@ export type ClientCandidate = {
 
 /** A contact candidate aggregated from row participants. */
 export type ContactCandidate = {
-  /** Longest non-empty name seen across the contributing rows. */
+  /** Longest non-empty name seen across the contributing rows (technical /
+   *  envelope name — becomes contact.name). */
   displayName: string
   /** Lowercased + trimmed email — also the dedup key. */
   email: string
+  /** Native-language name recovered from email bodies for this address
+   *  (parser's `participantNativeNames`). `null` when none was found.
+   *  Becomes contact.name_native. */
+  nativeName: string | null
   /** How many scanned source_items mention this email. */
   occurrences: number
   /** Sample (capped at 5) source_item ids for context in the preview. */
   sampleSourceItemIds: string[]
+  /** Set when this candidate's email is NOT yet a contact, but its name OR
+   *  native name matches an existing contact AT THE SAME EMAIL DOMAIN —
+   *  points at that contact so the dialog can flag a possible duplicate and
+   *  pre-uncheck it. `null` when no such match. Advisory only: the operator
+   *  still decides whether to create. (Email-equal matches are deduped out
+   *  earlier and never become candidates.) */
+  possibleDuplicate?: {
+    contactId: string
+    name: string
+    email: string | null
+  } | null
 }
+
+/** An email→native-name pairing collected across the scanned rows. */
+export type NativeNameEntry = { email: string; nativeName: string }
+
+/** An email→phone pairing collected across the scanned rows. */
+export type PhoneEntry = { email: string; phone: string }
 
 /** Stable reference to either an existing contact row or a new candidate. */
 export type ContactRef =
@@ -80,6 +103,14 @@ export type DiscoveryPreview = {
   clientCandidates: ClientCandidate[]
   contactCandidates: ContactCandidate[]
   linkProposals: LinkProposal[]
+  /** Every email→native-name pairing seen across the scanned rows
+   *  (deduped, including emails that are ALREADY contacts). Applied to
+   *  fill blank `contact.name_native` on apply — both new and existing. */
+  nativeNames: NativeNameEntry[]
+  /** Every email→phone pairing seen across the scanned rows (deduped,
+   *  including already-contact emails). Applied to fill blank
+   *  `contact.phone` on apply — both new and existing. */
+  phones: PhoneEntry[]
 }
 
 export type ApplyDiscoveryInput = {
@@ -96,6 +127,12 @@ export type ApplyDiscoveryInput = {
     clients: ClientCandidate[]
     contacts: ContactCandidate[]
   }
+  /** Native-name pairings from the preview — applied to fill blank
+   *  `contact.name_native` on both new and pre-existing contacts. */
+  nativeNames: NativeNameEntry[]
+  /** Phone pairings from the preview — applied to fill blank
+   *  `contact.phone` on both new and pre-existing contacts. */
+  phones: PhoneEntry[]
 }
 
 export type ApplyDiscoveryResult = {
@@ -103,6 +140,10 @@ export type ApplyDiscoveryResult = {
   contactsCreated: number
   linksApplied: number
   scannedRowsStamped: number
+  /** How many contacts had a blank `name_native` filled this run. */
+  nativeNamesEnriched: number
+  /** How many contacts had a blank `phone` filled this run. */
+  phonesEnriched: number
   createdClients: { id: string; name: string }[]
   createdContacts: { id: string; name: string; email: string }[]
 }
@@ -196,6 +237,17 @@ function extractParticipants(meta: Record<string, unknown> | null): Participant[
 }
 
 /**
+ * Normalise a person name for fuzzy equality: trim, lowercase, collapse
+ * whitespace. CJK-safe (lowercase is a no-op there). NOT for company names —
+ * use `normaliseCompanyName`, which strips legal suffixes. Returns "" for the
+ * "(unknown)" placeholder so it never matches.
+ */
+function normalisePersonName(raw: string): string {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, " ")
+  return s === "(unknown)" ? "" : s
+}
+
+/**
  * The label immediately before the TLD of a domain.
  *   "acme.com" → "acme" · "mail.acme.com" → "acme" · "acme" → ""
  * Used for same-run webUrl inference (does the email domain belong to a
@@ -260,6 +312,7 @@ export async function previewDiscovery(opts?: {
       .select({
         id: contact.id,
         name: contact.name,
+        nameNative: contact.nameNative,
         email: contact.email,
         clientId: contact.clientId,
         status: contact.status,
@@ -296,6 +349,26 @@ export async function previewDiscovery(opts?: {
 
   // rowId → participant emails, kept for same-run webUrl inference.
   const participantsByRow = new Map<string, Participant[]>()
+
+  // email → native-language name, accumulated across rows (longest wins).
+  // Collected for ALL emails — including ones that are already contacts —
+  // so apply can backfill blank `name_native` on existing contacts too.
+  const nativeNameByEmail = new Map<string, string>()
+
+  // email → phone number, accumulated across rows (first plausible wins).
+  // Sourced from both the email parser's participantDetails (sender
+  // signature) and mentionedPeople (any provider, third-party business
+  // cards / contact blocks). Kept for ALL emails so apply can backfill
+  // blank `contact.phone` on existing contacts too.
+  const phoneByEmail = new Map<string, string>()
+  const considerPhone = (rawEmail: unknown, rawPhone: unknown) => {
+    const email = (typeof rawEmail === "string" ? rawEmail : "")
+      .trim()
+      .toLowerCase()
+    const phone = cleanPhone(typeof rawPhone === "string" ? rawPhone : "")
+    if (!email || !phone) return
+    if (!phoneByEmail.has(email)) phoneByEmail.set(email, phone)
+  }
 
   for (const row of rows) {
     const meta = (row.metadataJson as Record<string, unknown> | null) ?? {}
@@ -339,6 +412,42 @@ export async function previewDiscovery(opts?: {
         })
       }
     }
+
+    // Envelope-participant details (email parser): native name + phone,
+    // keyed by envelope email. Longest native name wins; first plausible
+    // phone wins. Kept even for existing-contact emails (apply backfills).
+    const detailsRaw = meta.participantDetails
+    if (Array.isArray(detailsRaw)) {
+      for (const n of detailsRaw) {
+        if (!n || typeof n !== "object") continue
+        const rec = n as Record<string, unknown>
+        const email = (typeof rec.email === "string" ? rec.email : "")
+          .trim()
+          .toLowerCase()
+        if (!email) continue
+        const nativeName = (
+          typeof rec.nativeName === "string" ? rec.nativeName : ""
+        ).trim()
+        if (nativeName) {
+          const existing = nativeNameByEmail.get(email)
+          if (existing === undefined || nativeName.length > existing.length) {
+            nativeNameByEmail.set(email, nativeName)
+          }
+        }
+        considerPhone(email, rec.phone)
+      }
+    }
+
+    // Phones from body-mentioned third parties (any provider) — these carry
+    // their own email, so the phone attaches to the right contact.
+    const mentionedRaw = meta.mentionedPeople
+    if (Array.isArray(mentionedRaw)) {
+      for (const m of mentionedRaw) {
+        if (!m || typeof m !== "object") continue
+        const rec = m as Record<string, unknown>
+        considerPhone(rec.email, rec.phone)
+      }
+    }
   }
 
   // ── 4. Same-run webUrl inference for new client candidates ──────────
@@ -372,19 +481,85 @@ export async function previewDiscovery(opts?: {
       b.occurrences - a.occurrences || a.displayName.localeCompare(b.displayName),
   )
 
+  // Index existing contacts by email domain → their normalised names (both
+  // technical + native), for the same-domain possible-duplicate guard. Only
+  // contacts with an email domain and at least one usable name participate.
+  const existingByDomain = new Map<
+    string,
+    { id: string; name: string; email: string | null; names: Set<string> }[]
+  >()
+  for (const c of existingContacts) {
+    const email = (c.email ?? "").trim().toLowerCase()
+    const domain = email ? extractEmailDomain(email) : ""
+    if (!domain) continue
+    const names = new Set<string>()
+    for (const n of [c.name, c.nameNative]) {
+      const norm = normalisePersonName(n ?? "")
+      if (norm.length >= 2) names.add(norm)
+    }
+    if (names.size === 0) continue
+    const arr = existingByDomain.get(domain) ?? []
+    arr.push({ id: c.id, name: c.name, email: c.email, names })
+    existingByDomain.set(domain, arr)
+  }
+
   const contactCandidates: ContactCandidate[] = Array.from(
     contactBuckets.values(),
   )
-    .map((b) => ({
-      displayName: b.bestName,
-      email: b.email,
-      occurrences: b.sourceItemIds.size,
-      sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
-    }))
+    .map((b) => {
+      const nativeName = nativeNameByEmail.get(b.email) ?? null
+      // Possible-duplicate check: candidate email is (by construction) not an
+      // existing contact's email. Flag it when its technical OR native name
+      // matches an existing contact's technical OR native name AND they share
+      // an email domain — corroboration that avoids merging distinct people
+      // who happen to share a common name.
+      const candNames = new Set<string>()
+      for (const n of [b.bestName, nativeName ?? ""]) {
+        const norm = normalisePersonName(n)
+        if (norm.length >= 2) candNames.add(norm)
+      }
+      const domain = extractEmailDomain(b.email)
+      let possibleDuplicate: ContactCandidate["possibleDuplicate"] = null
+      if (domain && candNames.size > 0) {
+        for (const e of existingByDomain.get(domain) ?? []) {
+          let overlap = false
+          for (const nm of candNames) {
+            if (e.names.has(nm)) {
+              overlap = true
+              break
+            }
+          }
+          if (overlap) {
+            possibleDuplicate = { contactId: e.id, name: e.name, email: e.email }
+            break
+          }
+        }
+      }
+      return {
+        displayName: b.bestName,
+        email: b.email,
+        nativeName,
+        occurrences: b.sourceItemIds.size,
+        sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
+        possibleDuplicate,
+      }
+    })
     .sort(
       (a, b) =>
         b.occurrences - a.occurrences || a.email.localeCompare(b.email),
     )
+
+  // All native-name pairings seen this run — keyed by email, including
+  // emails that are already contacts (apply backfills those too).
+  const nativeNames: NativeNameEntry[] = Array.from(
+    nativeNameByEmail.entries(),
+  ).map(([email, nativeName]) => ({ email, nativeName }))
+
+  // All email→phone pairings seen this run (same posture: includes emails
+  // that are already contacts, so apply can backfill blank phones).
+  const phones: PhoneEntry[] = Array.from(phoneByEmail.entries()).map(
+    ([email, phone]) => ({ email, phone }),
+  )
 
   // ── 5. Build link proposals ─────────────────────────────────────────
   // Link side "clients": DB clients with a webUrl + new candidates with an
@@ -455,6 +630,8 @@ export async function previewDiscovery(opts?: {
     clientCandidates,
     contactCandidates,
     linkProposals,
+    nativeNames,
+    phones,
   }
 }
 
@@ -526,6 +703,20 @@ export async function applyDiscovery(
     input.selectedContactEmails.map((e) => e.trim().toLowerCase()).filter(Boolean),
   )
   const overrides = input.contactNameOverrides ?? {}
+  // email → native-language name for this apply (lowercased keys).
+  const nativeByEmail = new Map<string, string>()
+  for (const n of input.nativeNames ?? []) {
+    const email = (n.email ?? "").trim().toLowerCase()
+    const nativeName = (n.nativeName ?? "").trim()
+    if (email && nativeName) nativeByEmail.set(email, nativeName)
+  }
+  // email → phone for this apply (lowercased keys).
+  const phoneMapByEmail = new Map<string, string>()
+  for (const p of input.phones ?? []) {
+    const email = (p.email ?? "").trim().toLowerCase()
+    const phone = (p.phone ?? "").trim()
+    if (email && phone) phoneMapByEmail.set(email, phone)
+  }
   const toCreateContacts = input.candidates.contacts.filter(
     (c) =>
       selectedContactEmails.has(c.email) && !existingContactEmails.has(c.email),
@@ -542,8 +733,9 @@ export async function applyDiscovery(
       return {
         id: randomUUID(),
         name: overridden || fallback,
+        nameNative: nativeByEmail.get(c.email) ?? null,
         email: c.email,
-        phone: null,
+        phone: phoneMapByEmail.get(c.email) ?? null,
         position: null,
         clientId: null,
         status: "initial" as EntityStatus,
@@ -620,7 +812,45 @@ export async function applyDiscovery(
     }
   }
 
-  // ── 4. Stamp every scanned row ──────────────────────────────────────
+  // ── 4. Backfill native names onto existing contacts (fill blanks only) ─
+  // New contacts already got their name_native at insert. This pass fills
+  // pre-existing contacts whose name_native is still blank — never
+  // overwrites a human-edited value. One UPDATE per email (rare: usually
+  // just the sender).
+  let nativeNamesEnriched = 0
+  for (const [email, nativeName] of nativeByEmail) {
+    const updated = await db
+      .update(contact)
+      .set({ nameNative: nativeName })
+      .where(
+        and(
+          eq(contact.organizationId, activeOrgId),
+          sql`lower(${contact.email}) = ${email}`,
+          sql`(${contact.nameNative} IS NULL OR ${contact.nameNative} = '')`,
+        ),
+      )
+      .returning({ id: contact.id })
+    nativeNamesEnriched += updated.length
+  }
+
+  // Same fill-blanks-only pass for phone numbers.
+  let phonesEnriched = 0
+  for (const [email, phone] of phoneMapByEmail) {
+    const updated = await db
+      .update(contact)
+      .set({ phone })
+      .where(
+        and(
+          eq(contact.organizationId, activeOrgId),
+          sql`lower(${contact.email}) = ${email}`,
+          sql`(${contact.phone} IS NULL OR ${contact.phone} = '')`,
+        ),
+      )
+      .returning({ id: contact.id })
+    phonesEnriched += updated.length
+  }
+
+  // ── 5. Stamp every scanned row ──────────────────────────────────────
   let scannedRowsStamped = 0
   if (input.scannedRowIds.length > 0) {
     await db
@@ -640,6 +870,8 @@ export async function applyDiscovery(
     contactsCreated: createdContacts.length,
     linksApplied,
     scannedRowsStamped,
+    nativeNamesEnriched,
+    phonesEnriched,
     createdClients,
     createdContacts,
   }

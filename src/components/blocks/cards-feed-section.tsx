@@ -45,12 +45,22 @@ const CATEGORIES = [
   "client_activity",
   "colleagues_activity",
   "business_info",
+  "action_required",
+  "ambiguity",
+  "data_intelligence",
+  "momentum",
+  "log_only",
 ] as const
 
 const CATEGORY_LABEL: Record<(typeof CATEGORIES)[number], string> = {
   client_activity: "Client activity",
   colleagues_activity: "Colleagues activity",
   business_info: "Business info",
+  action_required: "Action required",
+  ambiguity: "Ambiguity",
+  data_intelligence: "Data intelligence",
+  momentum: "Momentum",
+  log_only: "Log only",
 }
 
 function usePaged<T>(items: T[]) {

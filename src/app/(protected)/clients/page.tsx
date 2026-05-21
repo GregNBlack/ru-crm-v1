@@ -221,7 +221,15 @@ export default function ClientsPage() {
       if (contactStatusFilter !== ALL && c.status !== contactStatusFilter) {
         return false
       }
-      if (name && !c.name.toLowerCase().includes(name)) return false
+      // Name filter matches the technical name OR the native-language name,
+      // so searching either spelling finds the contact.
+      if (
+        name &&
+        !c.name.toLowerCase().includes(name) &&
+        !(c.nameNative ?? "").toLowerCase().includes(name)
+      ) {
+        return false
+      }
       if (email && !(c.email ?? "").toLowerCase().includes(email)) return false
       return true
     })
