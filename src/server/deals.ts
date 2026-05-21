@@ -19,6 +19,8 @@ export type DealRow = {
   id: string
   name: string
   description: string | null
+  reasoning: string | null
+  changes: string | null
   funnelStageId: string
   funnelStageName: string
   funnelStageProbability: number
@@ -304,6 +306,8 @@ export async function listDeals(
     id: r.deal.id,
     name: r.deal.name,
     description: r.deal.description,
+    reasoning: r.deal.reasoning,
+    changes: r.deal.changes,
     funnelStageId: r.deal.funnelStageId,
     funnelStageName: r.funnelStageName,
     funnelStageProbability: Number(r.funnelStageProbability),
@@ -353,6 +357,8 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     id: r.deal.id,
     name: r.deal.name,
     description: r.deal.description,
+    reasoning: r.deal.reasoning,
+    changes: r.deal.changes,
     funnelStageId: r.deal.funnelStageId,
     funnelStageName: r.funnelStageName,
     funnelStageProbability: Number(r.funnelStageProbability),

@@ -58,7 +58,12 @@ const dealOutputSchema = z.object({
   // UPDATE_STAGE branch
   matchedDealName: z.string(),
   updatedStageName: z.string(),
+  // What changed on this stage move, based on the new source signal — a
+  // short description that's logged on the deal WITHOUT rewriting its
+  // original description. Empty string for CREATE / SKIP.
+  changes: z.string(),
 
+  // One-sentence rationale for the action (create or stage move).
   reasoning: z.string(),
 })
 
@@ -535,6 +540,10 @@ export async function generateDeals(
             id: dealId,
             name: trimmedName,
             description: output.newDealDescription.trim() || null,
+            // Why the deal was created. `changes` stays null on creation —
+            // it only logs subsequent stage-move signals.
+            reasoning: output.reasoning.trim() || null,
+            changes: null,
             funnelStageId: stageId,
             clientId,
             value: safeValue,
@@ -590,7 +599,13 @@ export async function generateDeals(
 
         await db
           .update(deal)
-          .set({ funnelStageId: newStageId })
+          .set({
+            funnelStageId: newStageId,
+            // Refresh the rationale + log what changed; the deal's
+            // `description` is deliberately left untouched.
+            reasoning: output.reasoning.trim() || null,
+            changes: output.changes.trim() || null,
+          })
           .where(eq(deal.id, matchedDealId))
 
         result.stageUpdates++
@@ -678,9 +693,13 @@ Return JSON matching this exact shape (every field is required):
 
     "matchedDealName":     "string",
     "updatedStageName":    "string",
+    "changes":             "string",
 
     "reasoning": "string"
   }
+
+For UPDATE_STAGE: set "changes" to a 1–2 sentence description of what changed for the deal based on the new source signal (what drove the stage move). The deal's original description is NOT modified. Use "" for "changes" on CREATE / SKIP.
+"reasoning" is always one sentence on why the deal is created or its funnel stage is changed.
 
 Rules:
 - If the source has nothing to do with deals, set relevant=false and action="SKIP".

@@ -400,6 +400,15 @@ export const deal = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     description: text("description"),
+    // LLM-discovery provenance (nullable; null for manually-created deals).
+    // `reasoning`: one-sentence rationale the deal-discovery model gave for
+    // creating the deal OR moving its funnel stage (refreshed on each
+    // stage move). `changes`: a short description of what changed on a
+    // stage move, based on the new source signal — empty/null for a freshly
+    // created deal, and the deal's `description` is never rewritten by a move.
+    // Populated by `generateDeals`; surfaced on the deal card. No backfill.
+    reasoning: text("reasoning"),
+    changes: text("changes"),
     // `restrict` rather than `cascade` / `set null`: stages and clients are
     // never hard-deleted in this app (soft-delete via flags). Restrict makes
     // an accidental hard-delete fail loudly instead of orphaning deals.

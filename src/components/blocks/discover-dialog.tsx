@@ -116,7 +116,11 @@ export function DiscoverDialog({
         setPreview(dp)
 
         const c: Record<string, boolean> = {}
-        for (const cand of dp.clientCandidates) c[cand.normalisedKey] = true
+        // Pre-uncheck likely duplicates (name variant of an existing client)
+        // so they aren't created by default — the operator opts in to create
+        // a separate client (e.g. a different branch) after reviewing.
+        for (const cand of dp.clientCandidates)
+          c[cand.normalisedKey] = !cand.possibleDuplicate
         setClientChecked(c)
 
         const ct: Record<string, boolean> = {}
@@ -567,6 +571,12 @@ function ClientRow({
           {candidate.occurrences === 1 ? "" : "s"}
           {candidate.inferredWebUrl ? ` · ${candidate.inferredWebUrl}` : ""}
         </div>
+        {candidate.possibleDuplicate && (
+          <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+            Possible duplicate of {candidate.possibleDuplicate.name} — check to
+            create as a separate client
+          </Badge>
+        )}
       </div>
     </div>
   )

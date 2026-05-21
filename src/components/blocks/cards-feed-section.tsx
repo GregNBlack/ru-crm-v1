@@ -225,7 +225,9 @@ export function CardsFeedSection() {
   return (
     <Card className="w-full">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <CardTitle className="text-xl tracking-wide">Truffalo Cards</CardTitle>
+        <CardTitle className="text-xl tracking-wide">
+          Good Morning Cards
+        </CardTitle>
         <ExploreSourcesDialog
           onCardsGenerated={load}
           trigger={

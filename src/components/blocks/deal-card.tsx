@@ -1,6 +1,6 @@
 "use client"
 
-import { useTransition } from "react"
+import { useState, useTransition } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 import { Building2, CalendarClock, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import type {
@@ -55,6 +60,47 @@ function formatAmount(value: string | null, currency: string): string | null {
     maximumFractionDigits: 2,
   })
   return `${symbol}${formatted}`
+}
+
+// A labeled deal text field (Description / Reason / Changes) shown clamped
+// to 3 lines on the card, with the FULL text revealed in a hover-card on
+// hover, keyboard focus, or click — so long text is readable without opening
+// the edit dialog. Content is portaled, so it isn't clipped by the card.
+// Mirrors the dashboard-card MessageField behaviour.
+function TextPreview({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+        {label}
+      </div>
+      <HoverCard
+        open={open}
+        onOpenChange={setOpen}
+        openDelay={150}
+        closeDelay={100}
+      >
+        <HoverCardTrigger asChild>
+          <p
+            tabIndex={0}
+            onClick={() => setOpen((o) => !o)}
+            className="text-muted-foreground line-clamp-3 whitespace-pre-wrap cursor-pointer rounded -mx-1 px-1 transition-colors hover:bg-muted/40 focus:bg-muted/40 outline-hidden"
+          >
+            {text}
+          </p>
+        </HoverCardTrigger>
+        <HoverCardContent
+          align="start"
+          className="w-96 max-h-80 overflow-y-auto"
+        >
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+            {label}
+          </div>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+        </HoverCardContent>
+      </HoverCard>
+    </div>
+  )
 }
 
 function formatDate(iso: string): string {
@@ -138,10 +184,10 @@ export function DealCard({
       </CardHeader>
       <CardContent className="flex-1 space-y-3 text-sm">
         {deal.description && (
-          <p className="text-muted-foreground line-clamp-3 whitespace-pre-wrap">
-            {deal.description}
-          </p>
+          <TextPreview label="Description" text={deal.description} />
         )}
+        {deal.reasoning && <TextPreview label="Reason" text={deal.reasoning} />}
+        {deal.changes && <TextPreview label="Changes" text={deal.changes} />}
 
         <div className="space-y-1 text-muted-foreground">
           {deal.clientName && (

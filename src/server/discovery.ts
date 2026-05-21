@@ -32,6 +32,13 @@ export type ClientCandidate = {
   inferredWebUrl: string | null
   /** Sample (capped at 5) source_item ids for context in the preview. */
   sampleSourceItemIds: string[]
+  /** Set when this company's normalised key matches an existing client but
+   *  the displayed name differs (e.g. existing "IN4COM" vs source "IN4COM
+   *  GmbH") — points at that client so the dialog can flag a possible
+   *  duplicate and pre-uncheck it. `null` when no such match (genuinely new)
+   *  OR when the name is an exact match (silently merged, never surfaced).
+   *  Checking it anyway creates a separate client (e.g. a different branch). */
+  possibleDuplicate?: { clientId: string; name: string } | null
 }
 
 /** A contact candidate aggregated from row participants. */
@@ -321,11 +328,19 @@ export async function previewDiscovery(opts?: {
       .where(eq(contact.organizationId, activeOrgId)),
   ])
 
-  const existingClientKeys = new Set(
-    existingClients
-      .map((c) => normaliseCompanyName(c.name))
-      .filter((k) => k.length > 0),
-  )
+  // normalised key → an existing client (first wins) for the possible-
+  // duplicate flag, plus the set of exact (lowercased) existing names so we
+  // can still silently merge truly-identical companies without a prompt.
+  const existingClientByKey = new Map<string, { id: string; name: string }>()
+  const exactExistingClientNames = new Set<string>()
+  for (const c of existingClients) {
+    const key = normaliseCompanyName(c.name)
+    if (key && !existingClientByKey.has(key)) {
+      existingClientByKey.set(key, { id: c.id, name: c.name })
+    }
+    const lower = c.name.trim().toLowerCase()
+    if (lower) exactExistingClientNames.add(lower)
+  }
   const existingContactEmails = new Set(
     existingContacts
       .map((c) => (c.email ?? "").trim().toLowerCase())
@@ -381,7 +396,13 @@ export async function previewDiscovery(opts?: {
         const name = item.trim()
         if (!name) continue
         const key = normaliseCompanyName(name)
-        if (!key || existingClientKeys.has(key)) continue
+        if (!key) continue
+        // Drop only EXACT-name matches (truly the same client → silent merge,
+        // as before). Suffix/format variants (e.g. existing "IN4COM" vs source
+        // "IN4COM GmbH") share the key but differ in name → kept as a
+        // candidate and flagged `possibleDuplicate` below so the operator
+        // decides same-vs-new-branch.
+        if (exactExistingClientNames.has(name.toLowerCase())) continue
         const existing = clientBuckets.get(key)
         if (existing) {
           existing.sourceItemIds.add(row.id)
@@ -474,6 +495,12 @@ export async function previewDiscovery(opts?: {
       occurrences: b.sourceItemIds.size,
       inferredWebUrl,
       sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
+      // Key matches an existing client but the name differs (exact matches
+      // were dropped above) → flag the existing client for the operator.
+      possibleDuplicate: (() => {
+        const m = existingClientByKey.get(b.normalisedKey)
+        return m ? { clientId: m.id, name: m.name } : null
+      })(),
     }
   })
   clientCandidates.sort(
@@ -655,11 +682,16 @@ export async function applyDiscovery(
   )
 
   const selectedClientKeys = new Set(input.selectedClientKeys)
-  const toCreateClients = input.candidates.clients.filter(
-    (c) =>
-      selectedClientKeys.has(c.normalisedKey) &&
-      !existingClientKeys.has(c.normalisedKey),
-  )
+  const toCreateClients = input.candidates.clients.filter((c) => {
+    if (!selectedClientKeys.has(c.normalisedKey)) return false
+    // Operator-confirmed branch: the candidate was flagged as a possible
+    // duplicate of an existing client but explicitly selected → create a
+    // separate client even though the normalised key collides (e.g. a
+    // different country branch). Otherwise block on key collision to avoid
+    // accidental dups / parallel-session races.
+    if (c.possibleDuplicate) return true
+    return !existingClientKeys.has(c.normalisedKey)
+  })
 
   const createdClients: { id: string; name: string }[] = []
   // normalisedKey → new client id (for same-run link resolution).
