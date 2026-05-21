@@ -201,9 +201,6 @@ export function ExploreSourcesDialog({
         }),
       })
       const data = await res.json()
-      // Surface the full server response so the operator can inspect
-      // per-item error messages in DevTools when something looks off.
-      console.log("[explore-sources] server response:", data)
       if (!res.ok) {
         toast.error(data.error || "Card generation failed")
         return

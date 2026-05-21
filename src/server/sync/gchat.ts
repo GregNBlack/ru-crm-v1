@@ -1,6 +1,6 @@
 "use server"
 
-import { getChatClient } from "@/lib/google-chat"
+import { getChatClient, listChatMembersDetailed } from "@/lib/google-chat"
 import {
   upsertSourceItem,
   getLatestSourceCreatedAt,
@@ -29,6 +29,20 @@ export async function syncGoogleChatMessages(
   const creds = getGchatCredentials(ctx.id, ctx.credentialsRef)
   const chat = getChatClient(creds)
 
+  // Fetch space members once so we can resolve each message's sender to a
+  // contactable {email, name}. External / cross-tenant senders typically
+  // have no email — they just won't appear in the map.
+  const members = await listChatMembersDetailed(creds, config.spaceId)
+  const senderByResource = new Map<string, { email: string; name: string }>()
+  for (const m of members) {
+    if (m.email) {
+      senderByResource.set(m.resourceName, {
+        email: m.email,
+        name: m.displayName ?? "",
+      })
+    }
+  }
+
   const cursor = await getLatestSourceCreatedAt(sourceId)
   // Chat's filter syntax wants RFC3339 with the `T…Z` suffix.
   const cursorIso = cursor
@@ -47,6 +61,14 @@ export async function syncGoogleChatMessages(
 
   for (const msg of response.data.messages ?? []) {
     if (!msg.name) continue
+    // Resolve the sender to a contactable participant via the members map.
+    // Missing (external sender / no email) → empty array = "no actionable
+    // participants on this row". We don't stash silent room members; sender
+    // only, to keep contact discovery focused.
+    const senderResource = msg.sender?.name
+    const sender = senderResource
+      ? senderByResource.get(senderResource)
+      : undefined
     const result = await upsertSourceItem({
       sourceId: ctx.id,
       organizationId: ctx.organizationId,
@@ -61,6 +83,9 @@ export async function syncGoogleChatMessages(
         authorType: msg.sender?.type ?? "HUMAN",
         text: msg.text ?? "",
         attachmentCount: msg.attachment?.length ?? 0,
+        participants: sender
+          ? [{ email: sender.email, name: sender.name }]
+          : [],
       },
     })
     if (result.inserted) inserted++

@@ -318,7 +318,6 @@ export async function generateCards(
       return
     }
     if (!markdown.trim()) {
-      console.log(`[generate-cards] ${item.id} · empty markdown — skipped`)
       result.skippedNoMarkdown++
       itemIdsToStamp.push(item.id)
       return
@@ -351,9 +350,6 @@ export async function generateCards(
       })
 
       if (!output.relevant) {
-        console.log(
-          `[generate-cards] ${item.id} · not relevant per rule — skipped`,
-        )
         result.skippedNotRelevant++
         itemIdsToStamp.push(item.id)
         return
@@ -403,11 +399,6 @@ export async function generateCards(
           .insert(cardUser)
           .values(matchedUserIds.map((uid) => ({ cardId, userId: uid })))
       }
-      console.log(
-        `[generate-cards] ${item.id} · card created (priority=${priority} ` +
-          `category=${category} clients=${matchedClientIds.length} ` +
-          `users=${matchedUserIds.length})`,
-      )
       result.cardsCreated++
       itemIdsToStamp.push(item.id)
     } catch (e) {

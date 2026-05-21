@@ -20,22 +20,31 @@ export function getChatClient(creds: GchatCredentials) {
   return google.chat({ version: "v1", auth })
 }
 
+export type ChatMemberDetail = {
+  /** e.g. "users/12345" — matches `message.sender.name`. */
+  resourceName: string
+  displayName: string | null
+  email: string | null
+}
+
 /**
- * List human member displayNames of a Chat space. Best-effort:
- *   - Excludes bots (`member.type === "BOT"`) — they're not real recipients.
- *   - Skips members with no displayName (rare, but Google sometimes returns
- *     stripped User objects for external participants).
+ * List human members of a Chat space with their resource name, display
+ * name, and email. Best-effort:
+ *   - Excludes bots (`member.type === "BOT"`) — keeps unset/HUMAN.
  *   - Returns `[]` on *any* error (missing scope, revoked auth, transient
- *     failure). The parser's `recipients` field is allowed to be empty per
- *     the template, so callers should treat this as non-critical.
+ *     failure), so callers treat participant extraction as non-critical.
+ *
+ * The Chat API's User schema in googleapis is stale — the runtime API
+ * returns `email` but the TypeScript type doesn't model it, so we cast
+ * narrowly to read it.
  */
-export async function listChatMembers(
+export async function listChatMembersDetailed(
   creds: GchatCredentials,
   spaceName: string,
-): Promise<string[]> {
+): Promise<ChatMemberDetail[]> {
   try {
     const chat = getChatClient(creds)
-    const out: string[] = []
+    const out: ChatMemberDetail[] = []
     let pageToken: string | undefined
     do {
       const response = await chat.spaces.members.list({
@@ -44,22 +53,45 @@ export async function listChatMembers(
         ...(pageToken ? { pageToken } : {}),
       })
       for (const membership of response.data.memberships ?? []) {
-        const user = membership.member
+        const user = membership.member as
+          | (NonNullable<typeof membership.member> & { email?: string | null })
+          | null
+          | undefined
         if (!user) continue
         if (user.type && user.type !== "HUMAN") continue
-        const name = user.displayName?.trim()
-        if (name) out.push(name)
+        if (!user.name) continue
+        out.push({
+          resourceName: user.name,
+          displayName: user.displayName?.trim() || null,
+          email: user.email?.trim().toLowerCase() || null,
+        })
       }
       pageToken = response.data.nextPageToken ?? undefined
     } while (pageToken)
     return out
   } catch (error) {
     console.warn(
-      "[google-chat] listChatMembers failed — returning empty list:",
+      "[google-chat] listChatMembersDetailed failed — returning empty list:",
       error instanceof Error ? error.message : error,
     )
     return []
   }
+}
+
+/**
+ * List human member displayNames of a Chat space. Thin wrapper over
+ * `listChatMembersDetailed` preserving the existing parser callsite
+ * signature (the `recipients` field wants names only). Best-effort:
+ * returns `[]` on any error, skips members with no displayName.
+ */
+export async function listChatMembers(
+  creds: GchatCredentials,
+  spaceName: string,
+): Promise<string[]> {
+  const detailed = await listChatMembersDetailed(creds, spaceName)
+  return detailed
+    .map((m) => m.displayName)
+    .filter((n): n is string => !!n)
 }
 
 /**

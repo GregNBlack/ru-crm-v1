@@ -487,9 +487,6 @@ export async function generateDeals(
             normaliseName(output.newDealClientName),
           )
           if (!clientId) {
-            console.log(
-              `[generate-deals] ${item.id} · unknown client "${output.newDealClientName}" — skipped`,
-            )
             result.skippedUnknownClient++
             result.errors.push({
               sourceItemId: item.id,
@@ -502,9 +499,6 @@ export async function generateDeals(
             normaliseName(output.newDealStageName),
           )
           if (!stageId) {
-            console.log(
-              `[generate-deals] ${item.id} · unknown stage "${output.newDealStageName}" — skipped`,
-            )
             result.skippedUnknownStage++
             result.errors.push({
               sourceItemId: item.id,
@@ -563,9 +557,6 @@ export async function generateDeals(
               )
           }
 
-          console.log(
-            `[generate-deals] ${item.id} · deal created (name="${trimmedName}" stage=${output.newDealStageName})`,
-          )
           result.dealsCreated++
           itemIdsToStamp.push(item.id)
           return
@@ -576,9 +567,6 @@ export async function generateDeals(
           normaliseName(output.matchedDealName),
         )
         if (!matchedDealId) {
-          console.log(
-            `[generate-deals] ${item.id} · unknown matched deal "${output.matchedDealName}" — skipped`,
-          )
           result.skippedUnknownDeal++
           result.errors.push({
             sourceItemId: item.id,
@@ -605,9 +593,6 @@ export async function generateDeals(
           .set({ funnelStageId: newStageId })
           .where(eq(deal.id, matchedDealId))
 
-        console.log(
-          `[generate-deals] ${item.id} · stage updated (deal="${output.matchedDealName}" → ${output.updatedStageName})`,
-        )
         result.stageUpdates++
         itemIdsToStamp.push(item.id)
       } catch (e) {

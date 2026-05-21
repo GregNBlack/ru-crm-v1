@@ -20,7 +20,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
-import { Link2, Loader, Plus, Sparkles, X } from "lucide-react"
+import { Loader, Plus, Sparkles, X } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { ClientRow } from "@/app/api/clients/route"
 import type { ContactRow } from "@/app/api/contacts/route"
@@ -35,12 +35,13 @@ import DealEditDialog from "@/components/forms/form-deal-edit"
 import { ClientCard } from "@/components/blocks/client-card"
 import { ContactCard } from "@/components/blocks/contact-card"
 import { DealCard } from "@/components/blocks/deal-card"
-import { DiscoverClientsDialog } from "@/components/blocks/discover-clients-dialog"
-import { DiscoverContactsDialog } from "@/components/blocks/discover-contacts-dialog"
+import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { DiscoverDealsDialog } from "@/components/blocks/discover-deals-dialog"
-import { LinkContactsToClientsDialog } from "@/components/blocks/link-contacts-to-clients-dialog"
 
 const PAGE_SIZE = 6
+// Clients + Contacts share one merged tab with two stacked grids; 3 cards
+// per row, one row visible each, so both sections fit on one screen.
+const CLIENT_CONTACT_PAGE_SIZE = 3
 const ALL = "__all__"
 
 const CLIENT_STATUSES = ["active", "initial", "suspended"] as const
@@ -52,12 +53,12 @@ const FUNNEL_PHASES = [
   "retention",
 ] as const
 
-function usePaged<T>(items: T[]) {
+function usePaged<T>(items: T[], pageSize: number = PAGE_SIZE) {
   const [page, setPage] = useState(1)
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize))
   const effectivePage = Math.min(page, totalPages)
-  const start = (effectivePage - 1) * PAGE_SIZE
-  const pageItems = items.slice(start, start + PAGE_SIZE)
+  const start = (effectivePage - 1) * pageSize
+  const pageItems = items.slice(start, start + pageSize)
   return { page: effectivePage, setPage, totalPages, pageItems }
 }
 
@@ -273,8 +274,8 @@ export default function ClientsPage() {
     return total
   }, [deals])
 
-  const clientPaged = usePaged(filteredClients)
-  const contactPaged = usePaged(filteredContacts)
+  const clientPaged = usePaged(filteredClients, CLIENT_CONTACT_PAGE_SIZE)
+  const contactPaged = usePaged(filteredContacts, CLIENT_CONTACT_PAGE_SIZE)
 
   const clientGrid = useMemo(
     () =>
@@ -329,42 +330,57 @@ export default function ClientsPage() {
       <h1 className="text-2xl font-medium mt-2">CLIENTS</h1>
 
       <div className="w-full max-w-7xl px-4">
-        <Tabs defaultValue="clients" className="w-full">
+        <Tabs defaultValue="clientsContacts" className="w-full">
           <TabsList>
-            <TabsTrigger value="clients">Clients</TabsTrigger>
-            <TabsTrigger value="contacts">Contacts</TabsTrigger>
+            <TabsTrigger value="clientsContacts">
+              Clients &amp; Contacts
+            </TabsTrigger>
             <TabsTrigger value="deals">Deals</TabsTrigger>
           </TabsList>
 
           <TabsContent
-            value="clients"
+            value="clientsContacts"
             forceMount
-            className="mt-4 data-[state=inactive]:hidden"
+            className="mt-4 data-[state=inactive]:hidden space-y-4"
           >
-            <Card>
-              <CardContent className="pt-6 space-y-4">
-                <div className="flex justify-end gap-2">
-                  <DiscoverClientsDialog
-                    onApplied={refreshAll}
-                    trigger={
-                      <Button size="sm" variant="default">
-                        <Sparkles className="h-4 w-4 mr-1" />
-                        Discover from sources
-                      </Button>
-                    }
-                  />
-                  <ClientEditDialog
-                    mode="create"
-                    onSuccess={refreshAll}
-                    trigger={
-                      <Button size="sm">
-                        <Plus className="h-4 w-4 mr-1" />
-                        New client
-                      </Button>
-                    }
-                  />
-                </div>
+            {/* Shared toolbar for both sections */}
+            <div className="flex justify-end gap-2 flex-wrap">
+              <DiscoverDialog
+                onApplied={refreshAll}
+                trigger={
+                  <Button size="sm" variant="default">
+                    <Sparkles className="h-4 w-4 mr-1" />
+                    Discover from sources
+                  </Button>
+                }
+              />
+              <ClientEditDialog
+                mode="create"
+                onSuccess={refreshAll}
+                trigger={
+                  <Button size="sm">
+                    <Plus className="h-4 w-4 mr-1" />
+                    New client
+                  </Button>
+                }
+              />
+              <ContactEditDialog
+                mode="create"
+                onSuccess={refreshAll}
+                trigger={
+                  <Button size="sm">
+                    <Plus className="h-4 w-4 mr-1" />
+                    New contact
+                  </Button>
+                }
+              />
+            </div>
 
+            <Card>
+              <CardHeader>
+                <CardTitle>Clients</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
                     placeholder="Filter by name…"
@@ -440,9 +456,7 @@ export default function ClientsPage() {
                   <EmptyState label="No clients match the filters." />
                 ) : (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {clientGrid}
-                    </div>
+                    <div className="grid grid-cols-3 gap-4">{clientGrid}</div>
                     <div className="flex justify-center">
                       <PagerNav
                         page={clientPaged.page}
@@ -454,46 +468,12 @@ export default function ClientsPage() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
 
-          <TabsContent
-            value="contacts"
-            forceMount
-            className="mt-4 data-[state=inactive]:hidden"
-          >
             <Card>
-              <CardContent className="pt-6 space-y-4">
-                <div className="flex justify-end gap-2 flex-wrap">
-                  <DiscoverContactsDialog
-                    onApplied={refreshAll}
-                    trigger={
-                      <Button size="sm" variant="default">
-                        <Sparkles className="h-4 w-4 mr-1" />
-                        Discover from sources
-                      </Button>
-                    }
-                  />
-                  <LinkContactsToClientsDialog
-                    onApplied={refreshAll}
-                    trigger={
-                      <Button size="sm" variant="default">
-                        <Link2 className="h-4 w-4 mr-1" />
-                        Link to clients
-                      </Button>
-                    }
-                  />
-                  <ContactEditDialog
-                    mode="create"
-                    onSuccess={refreshAll}
-                    trigger={
-                      <Button size="sm">
-                        <Plus className="h-4 w-4 mr-1" />
-                        New contact
-                      </Button>
-                    }
-                  />
-                </div>
-
+              <CardHeader>
+                <CardTitle>Contacts</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
                     placeholder="Filter by name…"
@@ -550,9 +530,7 @@ export default function ClientsPage() {
                   <EmptyState label="No contacts match the filters." />
                 ) : (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {contactGrid}
-                    </div>
+                    <div className="grid grid-cols-3 gap-4">{contactGrid}</div>
                     <div className="flex justify-center">
                       <PagerNav
                         page={contactPaged.page}

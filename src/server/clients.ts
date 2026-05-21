@@ -4,17 +4,15 @@ import { db } from "@/db/drizzle"
 import {
   client,
   contact,
-  sourceItem,
   user,
   type FunnelPhase,
   type EntityStatus,
 } from "@/db/schema"
-import { and, eq, desc, isNull, or, sql, inArray } from "drizzle-orm"
+import { and, eq, desc } from "drizzle-orm"
 import { generateText, Output, stepCountIs } from "ai"
 import { google } from "@ai-sdk/google"
 import { z } from "zod"
 import { getServerSession } from "@/lib/get-session"
-import { normaliseCompanyName } from "@/lib/normalise-company-name"
 import { randomUUID } from "crypto"
 
 export type ClientContactPreview = {
@@ -196,208 +194,6 @@ export async function updateClient(
       ...(data.status !== undefined ? { status: data.status } : {}),
     })
     .where(eq(client.id, clientId))
-}
-
-// ── Client discovery from source_item.metadata_json.companies ────────
-
-export type DiscoveredCompany = {
-  /** First-seen original casing — used as the new client.name. */
-  displayName: string
-  /** Canonical key used for dedup — `normaliseCompanyName(displayName)`. */
-  normalisedKey: string
-  /** How many source_items contain this company in metadata_json.companies. */
-  occurrences: number
-  /** Sample source_item ids where this company appears (capped at 5). */
-  sampleSourceItemIds: string[]
-  /** All source_item ids where this company appears — needed at apply
-   *  time so we know which rows to stamp `client_discovery_scanned_at`. */
-  sourceItemIds: string[]
-}
-
-export type DiscoveryPreview = {
-  scannedRowCount: number
-  candidates: DiscoveredCompany[]
-}
-
-/**
- * Scan unscanned (or re-parsed-since-last-scan) source_items in the active
- * org, extract the union of company names from metadata_json.companies,
- * dedup against existing client.name (using the same normalisation), and
- * return the candidate set with occurrence counts. NOT a write operation.
- */
-export async function discoverClients(): Promise<DiscoveryPreview> {
-  const { activeOrgId } = await requireOrgContext()
-
-  // Source rows we haven't scanned yet, OR that have been re-parsed since
-  // their last discovery scan. parse_status='complete' filter is a guard
-  // against half-parsed rows whose metadata_json.companies might be stale.
-  const rows = await db
-    .select({
-      id: sourceItem.id,
-      metadataJson: sourceItem.metadataJson,
-    })
-    .from(sourceItem)
-    .where(
-      and(
-        eq(sourceItem.organizationId, activeOrgId),
-        eq(sourceItem.parseStatus, "complete"),
-        or(
-          isNull(sourceItem.clientDiscoveryScannedAt),
-          sql`${sourceItem.parsedAt} > ${sourceItem.clientDiscoveryScannedAt}`,
-        ),
-      ),
-    )
-
-  // Existing clients in the org — used to filter out already-known
-  // companies. Match by normalised name.
-  const existingClients = await db
-    .select({ name: client.name })
-    .from(client)
-    .where(eq(client.organizationId, activeOrgId))
-  const existingKeys = new Set(
-    existingClients
-      .map((c) => normaliseCompanyName(c.name))
-      .filter((k) => k.length > 0),
-  )
-
-  // Aggregate companies across the scanned rows.
-  type Bucket = {
-    displayName: string
-    normalisedKey: string
-    sourceItemIds: Set<string>
-  }
-  const buckets = new Map<string, Bucket>()
-
-  for (const row of rows) {
-    const meta = (row.metadataJson as Record<string, unknown> | null) ?? {}
-    const raw = meta.companies
-    if (!Array.isArray(raw)) continue
-    for (const item of raw) {
-      if (typeof item !== "string") continue
-      const name = item.trim()
-      if (!name) continue
-      const key = normaliseCompanyName(name)
-      if (!key || existingKeys.has(key)) continue
-      const existing = buckets.get(key)
-      if (existing) {
-        existing.sourceItemIds.add(row.id)
-      } else {
-        buckets.set(key, {
-          // First-seen original casing wins as the display name.
-          displayName: name,
-          normalisedKey: key,
-          sourceItemIds: new Set([row.id]),
-        })
-      }
-    }
-  }
-
-  const candidates: DiscoveredCompany[] = Array.from(buckets.values())
-    .map((b) => ({
-      displayName: b.displayName,
-      normalisedKey: b.normalisedKey,
-      occurrences: b.sourceItemIds.size,
-      sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
-      sourceItemIds: Array.from(b.sourceItemIds),
-    }))
-    .sort((a, b) =>
-      b.occurrences - a.occurrences ||
-      a.displayName.localeCompare(b.displayName),
-    )
-
-  return { scannedRowCount: rows.length, candidates }
-}
-
-export type ApplyDiscoveryInput = {
-  /** Subset of normalised keys the user picked to create as new clients. */
-  selectedKeys: string[]
-  /** Full candidate set returned by discoverClients() — needed so we know
-   *  the displayName to use AND which source_item rows to stamp. */
-  candidates: DiscoveredCompany[]
-}
-
-export type ApplyDiscoveryResult = {
-  createdCount: number
-  createdClients: { id: string; name: string }[]
-  scannedRowsStamped: number
-}
-
-/**
- * Apply a user-edited discovery preview: insert the selected companies
- * as new clients (status='initial', funnelPhase='awareness'), then stamp
- * client_discovery_scanned_at = now() on every source_item row that
- * contributed to the preview (whether or not its company was selected).
- *
- * Re-running discovery skips those rows. Companies the user unchecked
- * therefore won't reappear unless they show up in a NEW source_item.
- */
-export async function applyDiscoveredClients(
-  input: ApplyDiscoveryInput,
-): Promise<ApplyDiscoveryResult> {
-  const { session, activeOrgId } = await requireOrgContext()
-
-  // Re-check vs current clients in case a parallel session created some.
-  const existingClients = await db
-    .select({ name: client.name })
-    .from(client)
-    .where(eq(client.organizationId, activeOrgId))
-  const existingKeys = new Set(
-    existingClients
-      .map((c) => normaliseCompanyName(c.name))
-      .filter((k) => k.length > 0),
-  )
-
-  const selectedSet = new Set(input.selectedKeys)
-  const toCreate = input.candidates.filter(
-    (c) => selectedSet.has(c.normalisedKey) && !existingKeys.has(c.normalisedKey),
-  )
-
-  const createdClients: { id: string; name: string }[] = []
-  if (toCreate.length > 0) {
-    const now = new Date()
-    const rows = toCreate.map((c) => ({
-      id: randomUUID(),
-      name: c.displayName,
-      phone: null,
-      email: null,
-      address: null,
-      webUrl: null,
-      funnelPhase: "awareness" as const,
-      status: "initial" as const,
-      userId: session.user.id,
-      organizationId: activeOrgId,
-      createdAt: now,
-      updatedAt: now,
-    }))
-    await db.insert(client).values(rows)
-    for (const r of rows) createdClients.push({ id: r.id, name: r.name })
-  }
-
-  // Stamp every source_item that contributed to the preview — including
-  // rows whose company the user rejected. They're considered "reviewed"
-  // so the next discovery run only inspects new / re-parsed rows.
-  const allScannedIds = Array.from(
-    new Set(input.candidates.flatMap((c) => c.sourceItemIds)),
-  )
-  let scannedRowsStamped = 0
-  if (allScannedIds.length > 0) {
-    await db
-      .update(sourceItem)
-      .set({ clientDiscoveryScannedAt: new Date() })
-      .where(
-        and(
-          eq(sourceItem.organizationId, activeOrgId),
-          inArray(sourceItem.id, allScannedIds),
-        ),
-      )
-    scannedRowsStamped = allScannedIds.length
-  }
-
-  return {
-    createdCount: createdClients.length,
-    createdClients,
-    scannedRowsStamped,
-  }
 }
 
 // ── Web lookup (Gemini + grounded google_search) ─────────────────────

@@ -196,7 +196,6 @@ export function DiscoverDealsDialog({
         }),
       })
       const data = await res.json()
-      console.log("[discover-deals] server response:", data)
       if (!res.ok) {
         toast.error(data.error || "Deal discovery failed")
         return

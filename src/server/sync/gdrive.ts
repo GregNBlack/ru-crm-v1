@@ -57,7 +57,7 @@ export async function syncGoogleDriveFiles(
     pageSize: SYNC_PAGE_LIMIT,
     orderBy: "modifiedTime desc",
     fields:
-      "files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,owners)",
+      "files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,owners,lastModifyingUser)",
     q: queryParts.join(" and "),
   })
 
@@ -68,6 +68,25 @@ export async function syncGoogleDriveFiles(
     if (!file.id) continue
     const sizeBytes =
       typeof file.size === "string" ? Number.parseInt(file.size, 10) : null
+
+    // Canonical participants: file owners + the last modifying user, deduped
+    // by lowercased email (an owner who's also last-modifier counts once).
+    const participantsByEmail = new Map<string, { email: string; name: string }>()
+    const considerUser = (
+      u: { displayName?: string | null; emailAddress?: string | null } | null | undefined,
+    ) => {
+      const email = (u?.emailAddress ?? "").trim().toLowerCase()
+      if (!email) return
+      if (!participantsByEmail.has(email)) {
+        participantsByEmail.set(email, {
+          email,
+          name: (u?.displayName ?? "").trim() || email,
+        })
+      }
+    }
+    for (const owner of file.owners ?? []) considerUser(owner)
+    considerUser(file.lastModifyingUser)
+
     const result = await upsertSourceItem({
       sourceId: ctx.id,
       organizationId: ctx.organizationId,
@@ -84,6 +103,7 @@ export async function syncGoogleDriveFiles(
         owners: (file.owners ?? []).map(
           (o) => o.displayName ?? o.emailAddress ?? "Unknown",
         ),
+        participants: Array.from(participantsByEmail.values()),
       },
     })
     if (result.inserted) inserted++

@@ -110,12 +110,9 @@ export async function reparseSourceItem(itemId: string): Promise<void> {
       r2UploadedAt: null,
       markdownR2Key: null,
       markdownR2SizeBytes: null,
-      // Re-parsing produces fresh `metadata_json.companies` (and may
-      // change which participant emails we pull from). Clear both
-      // discovery stamps so the next discoverClients() / discoverContacts()
-      // runs re-consider this row.
-      clientDiscoveryScannedAt: null,
-      contactDiscoveryScannedAt: null,
+      // Re-parsing produces fresh metadata. Clear the unified discovery
+      // stamp so the next applyDiscovery() run re-considers this row.
+      discoveryScannedAt: null,
       // Same reasoning for the cards-analysis stamp — the new markdown
       // body should get re-analyzed by the next default `generateCards()`
       // run.

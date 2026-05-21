@@ -776,15 +776,16 @@ export const sourceItem = pgTable(
     // `src/app/CLAUDE.md`. Stable across re-parses (overwrite in place).
     markdownR2Key: text("markdown_r2_key"),
     markdownR2SizeBytes: bigint("markdown_r2_size_bytes", { mode: "number" }),
-    // Stamped by `applyDiscoveredClients` after the user applies a client-
-    // discovery preview. Subsequent runs only consider rows where this is
-    // null OR `parsed_at > client_discovery_scanned_at` (so re-parses
-    // re-trigger discovery for that row). Cleared by `reparseSourceItem`.
-    clientDiscoveryScannedAt: timestamp("client_discovery_scanned_at"),
-    // Same shape as clientDiscoveryScannedAt but for the parallel contact-
-    // discovery flow on the Contacts tab. Independent timestamps because
-    // running one feature shouldn't lock out the other.
-    contactDiscoveryScannedAt: timestamp("contact_discovery_scanned_at"),
+    // Stamped by `applyDiscovery` after the unified discover-from-sources
+    // flow has considered this row (whether or not it contributed a
+    // client / contact / link candidate). Default eligibility filter is
+    // `discoveryScannedAt IS NULL OR parsedAt > discoveryScannedAt` so
+    // re-parses re-trigger discovery naturally. Cleared by
+    // `reparseSourceItem`. The "Re-scan already-reviewed items" checkbox
+    // in <DiscoverDialog> bypasses this filter for ad-hoc re-runs.
+    // Migrated from the two legacy stamps (client_/contact_…) via
+    // scripts/migrate-discovery-scanned-at.ts.
+    discoveryScannedAt: timestamp("discovery_scanned_at"),
     // Stamped by `generateCards()` after the analysis pipeline has
     // considered this row (whether or not it produced a card). The
     // pipeline's default eligibility filter is
