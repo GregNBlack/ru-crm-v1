@@ -170,6 +170,10 @@ async function extractAnalysis(transcript: string): Promise<MetadataAnalysis> {
     companies: uniqueStrings(output.companies),
     products: uniqueStrings(output.products),
     relevance: DEFAULT_RELEVANCE,
+    // AI-chat sessions don't extract body-mentioned people (out of scope
+    // for the parser-side mentionedPeople work — the "author" here is the
+    // user + assistant). Empty keeps the MetadataAnalysis shape uniform.
+    mentionedPeople: [],
   }
 }
 

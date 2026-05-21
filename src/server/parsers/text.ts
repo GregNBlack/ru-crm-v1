@@ -9,6 +9,9 @@ import {
   buildFrontmatter,
   emailsToDomainUrls,
   extractUrls,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -70,6 +73,11 @@ const analysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned in the body."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People mentioned in the email body beyond the sender/recipients (third parties referenced by name). See the system prompt for emission rules.",
+    ),
   contentMarkdown: z
     .string()
     .describe(
@@ -140,7 +148,11 @@ When relevance.isJunk = true, set contentMarkdown to "(filtered)" — the body w
 EXTRACTION (when isJunk = false)
 ═══════════════════════════════════════════════════════════
 
-Extract structured metadata and convert the body to clean readable markdown. Never fabricate facts — only return what is present in the message.`
+Extract structured metadata and convert the body to clean readable markdown. Never fabricate facts — only return what is present in the message.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For email specifically: the "author/sender" is the From: address; recipients (To/Cc/Bcc) are also captured elsewhere — don't include them in mentionedPeople either. Only mention third parties referenced inside the body. When inferring organization from the sender's affiliation, derive the sender's company from their email domain (e.g. sender alice@acme.com → "Acme" as the inferred org).`
 
 export type ParsedSource = {
   markdown: string
@@ -301,6 +313,7 @@ export async function parseEmailMessage(
         category: analysis.relevance.category,
         reason: analysis.relevance.reason,
       },
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

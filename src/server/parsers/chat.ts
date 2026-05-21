@@ -9,6 +9,9 @@ import {
   buildFrontmatter,
   DEFAULT_RELEVANCE,
   extractUrls,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -34,6 +37,11 @@ const analysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned in the body."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People mentioned in the message body beyond the author and channel members (third parties referenced by name). See the system prompt for emission rules.",
+    ),
   contentMarkdown: z
     .string()
     .describe(
@@ -119,8 +127,11 @@ export async function parseChatMessage(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.text.model,
     output: Output.object({ schema: analysisSchema }),
-    system:
-      "You are a precise Google Chat message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.",
+    system: `You are a precise Google Chat message parsing assistant. Extract structured metadata and convert the message into clean markdown. Never fabricate facts — only return what is present in the message.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For Chat specifically: the 'author/sender' is the message author shown above; don't include them in mentionedPeople. Channel members listed above are also captured elsewhere — don't include them either unless the body explicitly attributes them with an organization (e.g. quotes an email or names their company). When inferring organization from the author's affiliation, you can't always derive it from a Chat author — only emit a medium-confidence inferred org when the body text itself makes the author's company unambiguous.`,
     prompt: buildLlmPrompt({ author, recipients, bodyText }),
   })
 
@@ -182,6 +193,7 @@ export async function parseChatMessage(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

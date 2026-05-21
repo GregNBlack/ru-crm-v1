@@ -6,6 +6,9 @@ import {
   assembleMarkdown,
   buildFrontmatter,
   DEFAULT_RELEVANCE,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -45,6 +48,11 @@ const imageAnalysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products visible in the image."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People visibly named in the image beyond the author (third parties on business cards, name plates, labelled photos). See the system prompt for emission rules.",
+    ),
   urls: z
     .array(z.string())
     .describe(
@@ -109,8 +117,11 @@ export async function parseImageBytes(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.image.model,
     output: Output.object({ schema: imageAnalysisSchema }),
-    system:
-      "You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.",
+    system: `You are a precise image parsing assistant. Extract structured metadata and convert the provided image into clean Markdown. For text-heavy images perform OCR faithfully; for photos/diagrams give a detailed description. Never fabricate facts that are not visible in the image.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For images specifically: the 'author/sender' is whoever you extract into the \`senders\` field (signature, byline, watermark). Don't include them in mentionedPeople. Only emit third parties visibly named in the image. Business cards / name plates / labelled photos with an organization shown are explicit attribution — confidence='high'. When inferring organization from the document's author, only do so if the image itself states the author's company unambiguously.`,
     messages: [
       {
         role: "user",
@@ -171,6 +182,7 @@ export async function parseImageBytes(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

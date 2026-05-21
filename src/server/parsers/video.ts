@@ -6,6 +6,9 @@ import {
   assembleMarkdown,
   buildFrontmatter,
   DEFAULT_RELEVANCE,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -69,6 +72,11 @@ const videoAnalysisSchema = z.object({
     .array(z.string())
     .describe(
       "Names of products mentioned in the audio OR visible in the video.",
+    ),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced in the video beyond the speakers — third parties named by speakers or visibly labelled on-screen with affiliation. One shared list across the visual and audio analysis. See the system prompt for emission rules.",
     ),
   urls: z
     .array(z.string())
@@ -146,8 +154,11 @@ export async function parseVideoBytes(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.video.model,
     output: Output.object({ schema: videoAnalysisSchema }),
-    system:
-      "You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.",
+    system: `You are a precise video parsing assistant. Analyse the provided video both visually and aurally. Produce a faithful visual description AND a faithful diarised transcript of any speech. Extract structured metadata. Never fabricate facts that are not present in the video.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For video specifically: the 'author/sender' is each of the SPEAKERS — don't include them in mentionedPeople. Only emit third parties referenced by the speakers or visibly labelled on-screen with affiliation (e.g. a slide showing 'John Donn — CEO, Acme'). When inferring organization from a speaker's affiliation, only do so if the video itself makes it unambiguous.`,
     messages: [
       {
         role: "user",
@@ -242,6 +253,9 @@ export async function parseVideoBytes(
     companies: uniqueStrings(analysis.companies),
     products: uniqueStrings(analysis.products),
     relevance: DEFAULT_RELEVANCE,
+    // One shared mentionedPeople list across both blocks — the LLM emits a
+    // single list for the whole video; both analyses get the same filtered array.
+    mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
   }
 
   return {

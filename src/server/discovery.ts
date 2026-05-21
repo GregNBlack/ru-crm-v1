@@ -131,12 +131,16 @@ type Participant = { email: string; name: string }
 
 /**
  * Pull `{email, name}` participant pairs off a source_item's metadata.
- * Two shapes, tried in order:
+ * Three shapes, tried in order (same email-keyed dedup across all):
  *   1. `metadata_json.participants: [{email, name}]` — canonical, written
  *      by gchat / gdrive sync (and any future provider that can expose
  *      emails). Nylas rows synced after this refactor also carry it.
  *   2. Nylas envelope `from / to / cc / bcc` arrays — fallback for old
  *      Nylas rows that pre-date the canonical field.
+ *   3. `metadata_json.mentionedPeople: [{name, email, …}]` — LLM-extracted
+ *      body mentions, written at parse time by every parser. Already
+ *      filtered to high-confidence + non-empty email at write time
+ *      (filterMentionedPeople), so we just feed them through the same dedup.
  * Automated addresses are dropped. Returns deduped-by-email (longest name
  * wins) pairs.
  */
@@ -170,6 +174,18 @@ function extractParticipants(meta: Record<string, unknown> | null): Participant[
     const list = m[field]
     if (!Array.isArray(list)) continue
     for (const p of list) {
+      if (p && typeof p === "object") {
+        consider((p as Record<string, unknown>).email, (p as Record<string, unknown>).name)
+      }
+    }
+  }
+
+  // 3. LLM-extracted body mentions (parse-time). Already filtered to
+  // high-confidence + non-empty email at parser write time, so we just run
+  // them through the same dedup (consider() still drops automated addresses).
+  const mentioned = m.mentionedPeople
+  if (Array.isArray(mentioned)) {
+    for (const p of mentioned) {
       if (p && typeof p === "object") {
         consider((p as Record<string, unknown>).email, (p as Record<string, unknown>).name)
       }

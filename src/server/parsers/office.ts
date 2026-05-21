@@ -9,6 +9,9 @@ import {
   assembleMarkdown,
   buildFrontmatter,
   DEFAULT_RELEVANCE,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -48,6 +51,11 @@ const officeAnalysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced in the document body beyond the author/signatories (third parties named in the text). See the system prompt for emission rules.",
+    ),
   urls: z
     .array(z.string())
     .describe("URLs that appear in the document text."),
@@ -124,8 +132,11 @@ export async function parseOfficeBytes(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.office.model,
     output: Output.object({ schema: officeAnalysisSchema }),
-    system:
-      "You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.",
+    system: `You are a precise document parsing assistant. Convert the provided pre-extracted document content into clean Markdown and extract structured metadata. Never fabricate facts that are not present in the input. Preserve the document's structure faithfully.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For Office documents specifically: the 'author/sender' is whoever you extract into the \`senders\` field (cover, byline, signature block, slide-deck author). Don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously (letterhead, slide template with company, signature with affiliation).`,
     prompt: buildLlmPrompt({ format, fileName, extracted }),
   })
 
@@ -170,6 +181,7 @@ export async function parseOfficeBytes(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

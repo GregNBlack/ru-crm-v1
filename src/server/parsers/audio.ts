@@ -6,6 +6,9 @@ import {
   assembleMarkdown,
   buildFrontmatter,
   DEFAULT_RELEVANCE,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -65,6 +68,11 @@ const audioAnalysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned in the audio."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced in the audio beyond the speakers themselves (third parties named by the speakers). See the system prompt for emission rules.",
+    ),
   urls: z
     .array(z.string())
     .describe(
@@ -126,8 +134,11 @@ export async function parseAudioBytes(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.audio.model,
     output: Output.object({ schema: audioAnalysisSchema }),
-    system:
-      "You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.",
+    system: `You are a precise audio parsing assistant. Transcribe the provided recording faithfully, diarise it by speaker, and extract structured metadata. Keep speaker labels stable across segments. Do not invent content that is not present in the audio.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For audio specifically: the 'author/sender' is each of the SPEAKERS — don't include them in mentionedPeople. Only emit third parties referenced by the speakers (e.g. "John from Acme said yesterday…" → John). When inferring organization from a speaker's affiliation, only do so if the audio itself makes the speaker's company unambiguous (someone introduces themselves with affiliation, or a recipient addresses them by company).`,
     messages: [
       {
         role: "user",
@@ -210,6 +221,7 @@ export async function parseAudioBytes(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

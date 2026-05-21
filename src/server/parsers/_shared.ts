@@ -1,4 +1,5 @@
 import "server-only"
+import { z } from "zod"
 
 // Junk classification — only the email parser populates this with real
 // values (it's the one provider where automated/transactional mail is
@@ -28,6 +29,83 @@ export type MetadataAnalysis = {
   companies: string[]
   products: string[]
   relevance: MetadataRelevance
+  // Body-mentioned third parties extracted by the parser's LLM call.
+  // Filtered to high-confidence + non-empty email before persist (see
+  // filterMentionedPeople). Read by discovery.ts as a third participant
+  // source after canonical participants + Nylas envelope.
+  mentionedPeople: MentionedPerson[]
+}
+
+// A third party referenced inside the body of a source item (not the
+// author/sender, not an envelope recipient — those are captured by the
+// sync-time `participants` field). Extracted by every parser's existing
+// Gemini call via the shared schema + prompt below.
+export type MentionedPerson = {
+  name: string
+  email: string // empty when not quoted in the body
+  organization: string // empty when no clear attribution
+  confidence: "high" | "medium"
+}
+
+export const mentionedPersonSchema = z.object({
+  name: z
+    .string()
+    .describe(
+      "Full name of the mentioned person as written in the body. Don't paraphrase.",
+    ),
+  email: z
+    .string()
+    .describe(
+      "Exact email address QUOTED in the body for this person. Empty string when no email is present. Never fabricate.",
+    ),
+  organization: z
+    .string()
+    .describe(
+      "Company name explicitly attributed to this person in the body (e.g. 'CEO of Acme', 'Acme's John'). Or, for a 'medium' confidence mention, the author/sender's organization when context makes the affiliation clear ('my colleague Jane'). Empty string when no clear attribution.",
+    ),
+  confidence: z
+    .enum(["high", "medium"])
+    .describe(
+      "high = email is explicitly quoted in the body OR organization is explicitly attributed to the person. medium = organization is inferred from the author/sender's affiliation (e.g. 'my colleague Jane' said by someone at Acme → Jane at Acme). OMIT the person entirely if neither applies.",
+    ),
+})
+
+// Reusable system-prompt clause. Each parser appends this PLUS a short
+// provider-specific addendum naming who the author/sender is (so the LLM
+// knows who NOT to include and where to source the medium-confidence
+// org inference). See refs spec § "Per-parser specifics".
+export const MENTIONED_PEOPLE_PROMPT = `Beyond the author/sender, scan the body for people EXPLICITLY mentioned who are likely real CRM contacts. For each, emit one entry in mentionedPeople with {name, email, organization, confidence}:
+
+- Quote email verbatim from the body if present; otherwise empty string. NEVER invent or guess an email.
+- Set organization to a company explicitly attributed to the person in the body (e.g. "CEO of Acme", "Acme's John Smith"). If the body doesn't attribute them but they're clearly part of the author/sender's own organization (e.g. "my colleague Jane", "our team's Alex"), set organization to the author's company and use confidence="medium".
+- Use confidence="high" only when EITHER the email is quoted OR an explicit org attribution exists. Use confidence="medium" for the author-org-inferred case. OMIT the person entirely if neither applies (i.e. a bare name with no email and no clear affiliation).
+- Do not include the author/sender themselves — they're captured elsewhere.`
+
+// v1 persist filter (server-side, post-LLM, pre-persist): keep only
+// high-confidence entries with a non-empty email, deduped by lowercased
+// email. Medium-confidence + email-less entries are emitted by the model
+// (future use) but dropped here — discovery dedups by email, so the
+// contact-table contract needs the email. See PHASE2.md #14.
+export function filterMentionedPeople(
+  raw: MentionedPerson[],
+): MentionedPerson[] {
+  const seen = new Set<string>()
+  const out: MentionedPerson[] = []
+  for (const p of raw ?? []) {
+    if (!p) continue
+    if (p.confidence !== "high") continue
+    const email = (p.email ?? "").trim().toLowerCase()
+    if (!email) continue
+    if (seen.has(email)) continue
+    seen.add(email)
+    out.push({
+      name: (p.name ?? "").trim(),
+      email,
+      organization: (p.organization ?? "").trim(),
+      confidence: "high",
+    })
+  }
+  return out
 }
 
 // Shape of the YAML frontmatter defined in refs/parsing-sources-template.md.

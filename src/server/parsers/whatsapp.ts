@@ -9,6 +9,9 @@ import {
   buildFrontmatter,
   DEFAULT_RELEVANCE,
   extractUrls,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -393,6 +396,11 @@ const analysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned in the body."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced inside the message bodies beyond the conversation participants (third parties named in the chat). See the system prompt for emission rules.",
+    ),
 })
 
 export type ParseWhatsAppGroupInput = {
@@ -429,8 +437,11 @@ export async function parseWhatsAppGroup(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.text.model,
     output: Output.object({ schema: analysisSchema }),
-    system:
-      "You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.",
+    system: `You are a precise WhatsApp chat parsing assistant. Extract structured metadata from a multi-message group transcript. Never fabricate facts — only return what is present in the conversation.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For WhatsApp specifically: the 'author/sender' is each of the conversation participants listed above; don't include them in mentionedPeople. Only emit third parties referenced inside the message bodies (e.g. someone shares 'John Donn (john.donn@acme.com) handles that'). When inferring organization from a participant's affiliation, only do so if the transcript itself makes their company unambiguous (someone introduces themselves with affiliation, or is addressed by company).`,
     prompt: buildLlmPrompt({
       authors: input.authors,
       rawText: input.rawText,
@@ -478,6 +489,7 @@ export async function parseWhatsAppGroup(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

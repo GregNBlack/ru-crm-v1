@@ -6,6 +6,9 @@ import {
   assembleMarkdown,
   buildFrontmatter,
   DEFAULT_RELEVANCE,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -43,6 +46,11 @@ const pdfAnalysisSchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced in the document body beyond the author/signatories (third parties named in the text). See the system prompt for emission rules.",
+    ),
   urls: z
     .array(z.string())
     .describe("URLs that appear in the document text."),
@@ -94,8 +102,11 @@ export async function parsePdfBytes(
   const { output: analysis } = await generateText({
     model: PARSER_CONFIG.pdf.model,
     output: Output.object({ schema: pdfAnalysisSchema }),
-    system:
-      "You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.",
+    system: `You are a precise document parsing assistant. Extract structured metadata and convert the provided PDF into clean Markdown. Do not invent facts. Aggressively strip repeating headers, footers, page numbers, and watermark boilerplate — they are noise, not content.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For PDFs specifically: the 'author/sender' is whoever you extract into the \`senders\` field (cover page byline, signature line, title-block author). Don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously (e.g. a letterhead, signature block with affiliation).`,
     messages: [
       {
         role: "user",
@@ -155,6 +166,7 @@ export async function parsePdfBytes(
       companies: uniqueStrings(analysis.companies),
       products: uniqueStrings(analysis.products),
       relevance: DEFAULT_RELEVANCE,
+      mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
     },
   }
 }

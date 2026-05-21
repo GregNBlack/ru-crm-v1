@@ -9,6 +9,9 @@ import {
   buildFrontmatter,
   DEFAULT_RELEVANCE,
   extractUrls,
+  filterMentionedPeople,
+  MENTIONED_PEOPLE_PROMPT,
+  mentionedPersonSchema,
   uniqueStrings,
   type MetadataAnalysis,
   type SourceFrontmatter,
@@ -80,6 +83,11 @@ const metadataOnlySchema = z.object({
   products: z
     .array(z.string())
     .describe("Names of products mentioned."),
+  mentionedPeople: z
+    .array(mentionedPersonSchema)
+    .describe(
+      "People referenced in the document body beyond the file owner (third parties named in the text). See the system prompt for emission rules.",
+    ),
 })
 
 // ── Block + result shapes ────────────────────────────────────────────
@@ -497,6 +505,7 @@ function analysisFromMetadataOnly(
     companies: uniqueStrings(a.companies),
     products: uniqueStrings(a.products),
     relevance: DEFAULT_RELEVANCE,
+    mentionedPeople: filterMentionedPeople(a.mentionedPeople ?? []),
   }
 }
 
@@ -514,7 +523,11 @@ async function runMetadataExtraction(args: {
   const { output } = await generateText({
     model: PARSER_CONFIG.text.model,
     output: Output.object({ schema: metadataOnlySchema }),
-    system: `${args.systemHint} Never fabricate facts that are not present in the provided content.`,
+    system: `${args.systemHint} Never fabricate facts that are not present in the provided content.
+
+${MENTIONED_PEOPLE_PROMPT}
+
+For Drive documents specifically: the 'author/sender' is the file owner (provided in the context); don't include them in mentionedPeople. Only emit third parties referenced in the document body. When inferring organization from the author's affiliation, only do so if the document itself states the author's company unambiguously.`,
     prompt: `${args.context}\n\n--- BEGIN CONTENT ---\n${clipped}\n--- END CONTENT ---`,
   })
   return output
