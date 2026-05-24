@@ -5,6 +5,13 @@ import {
   type GenerateDealsInput,
 } from "@/server/deals-discovery"
 
+// Re-export result types so client components import them without dragging
+// in the server-only discovery module.
+export type {
+  GenerateDealsResult,
+  PlannedDealAction,
+} from "@/server/deals-discovery"
+
 // Same envelope as /api/cards/generate — per-item LLM × concurrency 3 ×
 // cap 50 fits comfortably inside Vercel Functions' 300s.
 export const maxDuration = 300
@@ -62,6 +69,7 @@ export async function POST(request: NextRequest) {
       ruleId: body.ruleId,
       modelKey: body.modelKey,
       includeAlreadyAnalyzed: body.includeAlreadyAnalyzed === true,
+      dryRun: body.dryRun === true,
     })
     return NextResponse.json({ success: true, result })
   } catch (error) {

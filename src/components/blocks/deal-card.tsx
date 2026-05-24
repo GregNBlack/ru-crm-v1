@@ -123,6 +123,8 @@ export function DealCard({
   const stageClass = STAGE_COLOR[deal.funnelStageName] ?? STAGE_DEFAULT
   const amount = formatAmount(deal.value, deal.currency)
   const [isPending, startTransition] = useTransition()
+  // Both soft-delete states dim the card; each gets its own badge.
+  const isSoftDeleted = deal.status === "cancelled" || deal.status === "deleted"
 
   const handleStageChange = (nextStageId: string) => {
     if (nextStageId === deal.funnelStageId) return
@@ -151,7 +153,7 @@ export function DealCard({
   return (
     <Card
       className={`flex flex-col bg-muted/50 dark:bg-muted/30 border-muted dark:border-gray-600 ${
-        deal.isCancelled ? "opacity-60" : ""
+        isSoftDeleted ? "opacity-60" : ""
       }`}
     >
       <CardHeader className="flex flex-row items-start justify-between gap-2">
@@ -161,12 +163,20 @@ export function DealCard({
             <Badge className={stageClass} variant="secondary">
               {deal.funnelStageName}
             </Badge>
-            {deal.isCancelled && (
+            {deal.status === "cancelled" && (
               <Badge
                 variant="secondary"
                 className="bg-zinc-500/15 text-zinc-600 dark:text-zinc-300"
               >
                 Cancelled
+              </Badge>
+            )}
+            {deal.status === "deleted" && (
+              <Badge
+                variant="secondary"
+                className="bg-red-500/15 text-red-600 dark:text-red-300"
+              >
+                Deleted
               </Badge>
             )}
           </div>

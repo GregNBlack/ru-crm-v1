@@ -8,6 +8,8 @@ import {
   client,
   contact,
   user,
+  dealStatus,
+  type DealStatus,
 } from "@/db/schema"
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
@@ -29,7 +31,7 @@ export type DealRow = {
   contacts: DealContactSummary[]
   value: string | null
   currency: string
-  isCancelled: boolean
+  status: DealStatus
   userId: string
   userName: string | null
   organizationId: string
@@ -257,14 +259,21 @@ export async function listDealContactOptions(
 }
 
 export async function listDeals(
-  options?: { includeCancelled?: boolean },
+  options?: { includeCancelled?: boolean; includeDeleted?: boolean },
 ): Promise<DealRow[]> {
   const { activeOrgId } = await requireOrgContext()
 
-  const conditions = [eq(deal.organizationId, activeOrgId)]
-  if (!options?.includeCancelled) {
-    conditions.push(eq(deal.isCancelled, false))
-  }
+  // `active` always shows. `cancelled` / `deleted` are soft-deleted and only
+  // surface when explicitly requested — the board passes both flags and does
+  // the final hide/show client-side so toggling doesn't refetch.
+  const allowedStatuses: DealStatus[] = ["active"]
+  if (options?.includeCancelled) allowedStatuses.push("cancelled")
+  if (options?.includeDeleted) allowedStatuses.push("deleted")
+
+  const conditions = [
+    eq(deal.organizationId, activeOrgId),
+    inArray(deal.status, allowedStatuses),
+  ]
 
   const rows = await db
     .select({
@@ -316,7 +325,7 @@ export async function listDeals(
     contacts: contactsByDeal.get(r.deal.id) ?? [],
     value: r.deal.value,
     currency: r.deal.currency,
-    isCancelled: r.deal.isCancelled,
+    status: r.deal.status,
     userId: r.deal.userId,
     userName: r.userName,
     organizationId: r.deal.organizationId,
@@ -367,7 +376,7 @@ export async function getDeal(dealId: string): Promise<DealRow | null> {
     contacts: contactRows,
     value: r.deal.value,
     currency: r.deal.currency,
-    isCancelled: r.deal.isCancelled,
+    status: r.deal.status,
     userId: r.deal.userId,
     userName: r.userName,
     organizationId: r.deal.organizationId,
@@ -409,7 +418,7 @@ export async function createDeal(data: {
     clientId: data.clientId,
     value,
     currency,
-    isCancelled: false,
+    status: "active",
     userId: session.user.id,
     organizationId: activeOrgId,
     createdAt: now,
@@ -440,7 +449,7 @@ export async function updateDeal(
     contactIds?: string[]
     value?: number | string | null
     currency?: string | null
-    isCancelled?: boolean
+    status?: DealStatus
   },
 ) {
   const { activeOrgId } = await requireOrgContext()
@@ -470,7 +479,12 @@ export async function updateDeal(
   if (data.currency !== undefined) {
     patch.currency = normaliseCurrency(data.currency)
   }
-  if (data.isCancelled !== undefined) patch.isCancelled = data.isCancelled
+  if (data.status !== undefined) {
+    if (!dealStatus.enumValues.includes(data.status)) {
+      throw new Error("Invalid deal status")
+    }
+    patch.status = data.status
+  }
 
   if (Object.keys(patch).length > 0) {
     await db.update(deal).set(patch).where(eq(deal.id, dealId))
@@ -489,15 +503,14 @@ export async function updateDeal(
   }
 }
 
-export async function setDealCancellation(
-  dealId: string,
-  isCancelled: boolean,
-) {
+// Status-only shortcut (mirrors tasks' `updateTaskStatus`). Used by the
+// `statusOnly` PUT path for quick cancel / delete / restore toggles.
+export async function setDealStatus(dealId: string, status: DealStatus) {
   const { activeOrgId } = await requireOrgContext()
+  if (!dealStatus.enumValues.includes(status)) {
+    throw new Error("Invalid deal status")
+  }
   await assertDealInOrg(dealId, activeOrgId)
-  await db
-    .update(deal)
-    .set({ isCancelled })
-    .where(eq(deal.id, dealId))
+  await db.update(deal).set({ status }).where(eq(deal.id, dealId))
 }
 

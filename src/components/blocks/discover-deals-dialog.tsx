@@ -26,6 +26,10 @@ import { toast } from "sonner"
 import { MODELS, DEFAULT_MODEL_KEY } from "@/lib/llm-models"
 import type { SourceSummary } from "@/server/sources"
 import type { RuleRow } from "@/app/api/rules/route"
+import type {
+  GenerateDealsResult,
+  PlannedDealAction,
+} from "@/app/api/deals/discover/route"
 
 type Period = "last_day" | "last_3_days" | "last_week" | "specific"
 
@@ -74,6 +78,12 @@ export function DiscoverDealsDialog({
 
   const [modelKey, setModelKey] = useState<string>(DEFAULT_MODEL_KEY)
   const [includeAlreadyAnalyzed, setIncludeAlreadyAnalyzed] = useState(false)
+  // Dry run: preview what the rule WOULD do, writing nothing. The rule-testing
+  // loop — iterate wording, re-run, no duplicates created, no items stamped.
+  const [dryRun, setDryRun] = useState(false)
+  const [dryRunResult, setDryRunResult] = useState<GenerateDealsResult | null>(
+    null,
+  )
 
   const [loadingOptions, setLoadingOptions] = useState(false)
   const [previewCount, setPreviewCount] = useState<number | null>(null)
@@ -154,6 +164,8 @@ export function DiscoverDealsDialog({
 
   useEffect(() => {
     if (!open) return
+    // A stale dry-run preview no longer reflects the current inputs.
+    setDryRunResult(null)
     const t = setTimeout(fetchPreview, 200)
     return () => clearTimeout(t)
   }, [open, fetchPreview])
@@ -182,6 +194,7 @@ export function DiscoverDealsDialog({
     }
 
     setRunning(true)
+    setDryRunResult(null)
     try {
       const res = await fetch("/api/deals/discover", {
         method: "POST",
@@ -193,6 +206,7 @@ export function DiscoverDealsDialog({
           ruleId,
           modelKey,
           includeAlreadyAnalyzed,
+          dryRun,
         }),
       })
       const data = await res.json()
@@ -200,19 +214,7 @@ export function DiscoverDealsDialog({
         toast.error(data.error || "Deal discovery failed")
         return
       }
-      const r = data.result as {
-        scanned: number
-        dealsCreated: number
-        stageUpdates: number
-        skippedNotRelevant: number
-        skippedNoMarkdown: number
-        skippedUnknownClient: number
-        skippedUnknownStage: number
-        skippedUnknownDeal: number
-        failed: number
-        capped: number
-        errors: { sourceItemId: string; message: string }[]
-      }
+      const r = data.result as GenerateDealsResult
       if (r.errors && r.errors.length > 0) {
         console.warn("[discover-deals] per-item errors:", r.errors)
       }
@@ -221,7 +223,19 @@ export function DiscoverDealsDialog({
         r.skippedNoMarkdown +
         r.skippedUnknownClient +
         r.skippedUnknownStage +
-        r.skippedUnknownDeal
+        r.skippedUnknownDeal +
+        r.skippedDuplicate
+
+      // Dry run: keep the dialog open and render the planned actions so the
+      // operator can judge the rule. Nothing was written, so don't refresh
+      // the board.
+      if (r.dryRun) {
+        setDryRunResult(r)
+        const verb = `${r.dealsCreated} would-create · ${r.stageUpdates} would-move`
+        toast.success(`Dry run · ${verb} · ${r.scanned} scanned`)
+        return
+      }
+
       const summary =
         `${r.dealsCreated} created · ${r.stageUpdates} stage update` +
         `${r.stageUpdates === 1 ? "" : "s"} · ${r.scanned} scanned · ` +
@@ -445,7 +459,102 @@ export function DiscoverDealsDialog({
                 </span>
               </Label>
             </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="discover-deals-dry-run"
+                checked={dryRun}
+                onCheckedChange={(v) => setDryRun(v === true)}
+                className="mt-0.5"
+              />
+              <Label
+                htmlFor="discover-deals-dry-run"
+                className="text-sm cursor-pointer leading-snug"
+              >
+                Dry run (preview only — write nothing)
+                <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+                  Runs the rule and shows what it would create / move without
+                  touching any deals or marking items as analyzed. Use it to
+                  iterate on rule wording before committing.
+                </span>
+              </Label>
+            </div>
           </section>
+
+          {dryRunResult && (
+            <section className="rounded-md border border-dashed border-amber-400/60 bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">
+                  Dry-run preview — nothing was written
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {dryRunResult.scanned} scanned
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {dryRunResult.dealsCreated} would-create ·{" "}
+                {dryRunResult.stageUpdates} would-move ·{" "}
+                {dryRunResult.skippedDuplicate} duplicate ·{" "}
+                {dryRunResult.skippedNotRelevant} not-relevant ·{" "}
+                {dryRunResult.skippedUnknownClient +
+                  dryRunResult.skippedUnknownStage +
+                  dryRunResult.skippedUnknownDeal}{" "}
+                unmatched
+                {dryRunResult.failed > 0
+                  ? ` · ${dryRunResult.failed} failed`
+                  : ""}
+              </div>
+              {dryRunResult.plannedActions.length === 0 ? (
+                <div className="text-xs text-muted-foreground italic">
+                  No create / move actions — the rule skipped everything in
+                  this window.
+                </div>
+              ) : (
+                <ul className="max-h-52 overflow-y-auto space-y-1.5 text-xs">
+                  {dryRunResult.plannedActions.map(
+                    (a: PlannedDealAction, i: number) => (
+                      <li
+                        key={`${a.sourceItemId}-${i}`}
+                        className="rounded border bg-background/60 px-2 py-1.5"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium ${
+                              a.action === "CREATE"
+                                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                                : "bg-blue-500/15 text-blue-600 dark:text-blue-300"
+                            }`}
+                          >
+                            {a.action === "CREATE" ? "CREATE" : "MOVE"}
+                          </span>
+                          <span className="font-medium truncate">
+                            {a.dealName}
+                          </span>
+                          {a.stageName && (
+                            <span className="text-muted-foreground truncate">
+                              → {a.stageName}
+                            </span>
+                          )}
+                          {a.clientName && (
+                            <span className="text-muted-foreground truncate">
+                              · {a.clientName}
+                            </span>
+                          )}
+                        </div>
+                        {a.reasoning && (
+                          <div className="text-muted-foreground mt-0.5 line-clamp-2">
+                            {a.reasoning}
+                          </div>
+                        )}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Untick &ldquo;Dry run&rdquo; and run again to commit these.
+              </p>
+            </section>
+          )}
 
           <section className="rounded-md bg-muted/40 p-3 text-sm">
             <div className="flex items-center gap-2">
@@ -507,7 +616,7 @@ export function DiscoverDealsDialog({
             ) : (
               <>
                 <Sparkles className="h-4 w-4 mr-1" />
-                Run discovery
+                {dryRun ? "Preview (dry run)" : "Run discovery"}
               </>
             )}
           </Button>

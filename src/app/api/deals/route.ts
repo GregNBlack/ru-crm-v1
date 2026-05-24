@@ -6,9 +6,10 @@ import {
   listDealFunnelStages,
   createDeal,
   updateDeal,
-  setDealCancellation,
+  setDealStatus,
   getDeal,
 } from "@/server/deals"
+import { dealStatus, type DealStatus } from "@/db/schema"
 
 export {
   type DealRow,
@@ -55,7 +56,8 @@ export async function GET(request: NextRequest) {
     }
     const includeCancelled =
       url.searchParams.get("includeCancelled") === "1"
-    const deals = await listDeals({ includeCancelled })
+    const includeDeleted = url.searchParams.get("includeDeleted") === "1"
+    const deals = await listDeals({ includeCancelled, includeDeleted })
     return NextResponse.json({ deals })
   } catch (error) {
     return errorResponse(error)
@@ -109,8 +111,8 @@ export async function PUT(request: NextRequest) {
     const body = await request.json()
     const {
       id,
-      cancelOnly,
-      isCancelled,
+      statusOnly,
+      status,
       name,
       description,
       funnelStageId,
@@ -122,15 +124,26 @@ export async function PUT(request: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
-    if (cancelOnly) {
-      if (typeof isCancelled !== "boolean") {
+    const isValidStatus = (s: unknown): s is DealStatus =>
+      typeof s === "string" &&
+      (dealStatus.enumValues as readonly string[]).includes(s)
+    // `statusOnly` is the quick cancel / delete / restore shortcut (mirrors
+    // tasks' `statusOnly`). Anything else goes through the full update.
+    if (statusOnly) {
+      if (!isValidStatus(status)) {
         return NextResponse.json(
-          { error: "isCancelled must be boolean" },
+          { error: "status must be one of: active, cancelled, deleted" },
           { status: 400 },
         )
       }
-      await setDealCancellation(id, isCancelled)
+      await setDealStatus(id, status)
       return NextResponse.json({ success: true })
+    }
+    if (status !== undefined && !isValidStatus(status)) {
+      return NextResponse.json(
+        { error: "status must be one of: active, cancelled, deleted" },
+        { status: 400 },
+      )
     }
     await updateDeal(id, {
       name,
@@ -140,7 +153,7 @@ export async function PUT(request: NextRequest) {
       contactIds,
       value,
       currency,
-      isCancelled,
+      status,
     })
     return NextResponse.json({ success: true })
   } catch (error) {

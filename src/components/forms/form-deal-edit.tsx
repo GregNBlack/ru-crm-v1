@@ -38,6 +38,16 @@ import type {
   DealContactOption,
   DealFunnelStageOption,
 } from "@/app/api/deals/route"
+import type { DealStatus } from "@/db/schema"
+
+// Edit-form status options. `active` is the live state; `cancelled` =
+// lost/withdrawn (kept for analytics); `deleted` = test/mistake, hidden
+// from the board AND excluded from deal discovery.
+const DEAL_STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "cancelled", label: "Cancelled (lost / withdrawn)" },
+  { value: "deleted", label: "Deleted (hidden, excluded from discovery)" },
+]
 
 type DealFormData = {
   name: string
@@ -46,7 +56,7 @@ type DealFormData = {
   clientId: string
   value: string
   currency: string
-  isCancelled: boolean
+  status: DealStatus
   // Multi-select kept inside the form state so the dialog's open-effect
   // can reset everything via a single `form.reset(...)` call — separate
   // useState here triggers a cascading-render lint error.
@@ -80,7 +90,7 @@ export default function DealEditDialog({
       clientId: deal?.clientId ?? "",
       value: deal?.value ?? "",
       currency: deal?.currency ?? "EUR",
-      isCancelled: deal?.isCancelled ?? false,
+      status: deal?.status ?? "active",
       contactIds: deal?.contacts.map((c) => c.id) ?? [],
     },
   })
@@ -127,7 +137,7 @@ export default function DealEditDialog({
           clientId: deal?.clientId ?? "",
           value: deal?.value ?? "",
           currency: deal?.currency ?? "EUR",
-          isCancelled: deal?.isCancelled ?? false,
+          status: deal?.status ?? "active",
           contactIds: deal?.contacts.map((c) => c.id) ?? [],
         })
       } catch {}
@@ -229,7 +239,7 @@ export default function DealEditDialog({
                 contactIds: data.contactIds,
                 value: numericValue,
                 currency: data.currency,
-                isCancelled: data.isCancelled,
+                status: data.status,
               }
         const res = await fetch("/api/deals", {
           method: mode === "create" ? "POST" : "PUT",
@@ -445,18 +455,28 @@ export default function DealEditDialog({
             {mode === "edit" && (
               <FormField
                 control={form.control}
-                name="isCancelled"
+                name="status"
                 render={({ field }) => (
-                  <FormItem className="flex items-center gap-2 space-y-0">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={(v) => field.onChange(Boolean(v))}
-                      />
-                    </FormControl>
-                    <FormLabel className="text-gray-400 cursor-pointer">
-                      Cancelled
-                    </FormLabel>
+                  <FormItem>
+                    <FormLabel className="text-gray-400">Status</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {DEAL_STATUS_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

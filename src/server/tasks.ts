@@ -244,7 +244,9 @@ export async function listTaskDealOptions(
   const { activeOrgId } = await requireOrgContext()
   const conditions = [
     eq(deal.organizationId, activeOrgId),
-    eq(deal.isCancelled, false),
+    // Only active deals are valid task contexts — cancelled / deleted deals
+    // are soft-deleted and shouldn't appear in the picker.
+    eq(deal.status, "active"),
   ]
   if (clientId) {
     conditions.push(eq(deal.clientId, clientId))

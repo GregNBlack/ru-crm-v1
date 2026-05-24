@@ -20,6 +20,7 @@ import {
   isNotNull,
   isNull,
   lte,
+  ne,
   or,
   sql,
 } from "drizzle-orm"
@@ -86,6 +87,23 @@ export type GenerateDealsInput = {
   // hasn't analyzed yet (or has been re-parsed since). When true, it
   // ignores `dealAnalysisScannedAt` entirely.
   includeAlreadyAnalyzed?: boolean
+  // Dry run: run the LLM and compute every decision (counters + planned
+  // actions) but write NOTHING — no deal/contact inserts, no stage updates,
+  // and crucially no `dealAnalysisScannedAt` stamp, so the same items stay
+  // eligible. The rule-testing workflow: iterate rule wording with dry-run
+  // until happy, then run for real.
+  dryRun?: boolean
+}
+
+/** One would-be action, returned only on dry runs so the dialog can show
+ *  what the rule WOULD do without committing. */
+export type PlannedDealAction = {
+  sourceItemId: string
+  action: "CREATE" | "UPDATE_STAGE"
+  dealName: string
+  clientName: string | null
+  stageName: string | null
+  reasoning: string
 }
 
 export type GenerateDealsResult = {
@@ -97,8 +115,16 @@ export type GenerateDealsResult = {
   skippedUnknownClient: number
   skippedUnknownStage: number
   skippedUnknownDeal: number
+  // A CREATE whose (client + normalised name) already matches a non-deleted
+  // deal — dropped to avoid duplicates (a `deleted` deal never blocks, so a
+  // fresh re-scan can re-create it).
+  skippedDuplicate: number
   failed: number
   capped: number
+  // True when this was a dry run (no writes, no stamps).
+  dryRun: boolean
+  // Populated only on dry runs: the CREATE / UPDATE_STAGE decisions.
+  plannedActions: PlannedDealAction[]
   errors: { sourceItemId: string; message: string }[]
 }
 
@@ -307,11 +333,34 @@ export async function generateDeals(
     .where(
       and(
         eq(deal.organizationId, activeOrgId),
-        eq(deal.isCancelled, false),
+        // Only active deals are match targets — cancelled / deleted are
+        // soft-deleted and out of the identify/match/move logic entirely.
+        eq(deal.status, "active"),
         sql`${dealFunnelStage.closureProbability} > 0`,
         sql`${dealFunnelStage.closureProbability} < 1`,
       ),
     )
+
+  // Create-side dedup index: every non-deleted deal keyed by
+  // `${clientId}::${normalisedName}`. A CREATE whose key already lives here
+  // is dropped as a duplicate. `deleted` deals are deliberately excluded so
+  // a fresh re-scan after marking the prior run's deals deleted re-creates
+  // them cleanly. Seeded from the DB, then grown in-memory as this run
+  // creates deals so same-run duplicates are also caught.
+  const existingDealRows = await db
+    .select({ name: deal.name, clientId: deal.clientId })
+    .from(deal)
+    .where(
+      and(
+        eq(deal.organizationId, activeOrgId),
+        ne(deal.status, "deleted"),
+      ),
+    )
+  const dealDedupKey = (clientId: string, name: string) =>
+    `${clientId}::${normaliseName(name)}`
+  const existingDealKeys = new Set(
+    existingDealRows.map((d) => dealDedupKey(d.clientId, d.name)),
+  )
 
   // Funnel stages — same resolution as listDealFunnelStages: org-scoped
   // if any active org rows exist for this org, else system. Repeated here
@@ -414,17 +463,21 @@ export async function generateDeals(
     skippedUnknownClient: 0,
     skippedUnknownStage: 0,
     skippedUnknownDeal: 0,
+    skippedDuplicate: 0,
     failed: 0,
     capped,
+    dryRun: input.dryRun === true,
+    plannedActions: [],
     errors: [],
   }
 
   const itemIdsToStamp: string[] = []
+  const dryRun = input.dryRun === true
 
   console.log(
     `[generate-deals] starting batch · candidates=${candidates.length} ` +
       `cap=${DEAL_DISCOVERY_HARD_CAP} concurrency=${DEAL_DISCOVERY_CONCURRENCY} ` +
-      `model=${input.modelKey}`,
+      `model=${input.modelKey} dryRun=${dryRun}`,
   )
 
   await mapWithConcurrency(
@@ -528,13 +581,45 @@ export async function generateDeals(
             return
           }
 
-          const dealId = randomUUID()
-          const now = new Date()
+          // Create-side dedup: skip if a non-deleted deal with the same
+          // client + normalised name already exists (seeded from DB, grown
+          // in-memory below to also catch same-run duplicates). Adding the
+          // key BEFORE any await closes the check-then-act race between the
+          // concurrent workers.
+          const dedupKey = dealDedupKey(clientId, trimmedName)
+          if (existingDealKeys.has(dedupKey)) {
+            result.skippedDuplicate++
+            result.errors.push({
+              sourceItemId: item.id,
+              message: `duplicate deal: "${trimmedName}" for this client`,
+            })
+            itemIdsToStamp.push(item.id)
+            return
+          }
+          existingDealKeys.add(dedupKey)
+
           const safeValue =
             Number.isFinite(output.newDealValue) && output.newDealValue > 0
               ? output.newDealValue.toFixed(2)
               : null
           const safeCurrency = normaliseCurrency(output.newDealCurrency) || "EUR"
+
+          if (dryRun) {
+            result.plannedActions.push({
+              sourceItemId: item.id,
+              action: "CREATE",
+              dealName: trimmedName,
+              clientName: output.newDealClientName.trim() || null,
+              stageName: output.newDealStageName.trim() || null,
+              reasoning: output.reasoning.trim(),
+            })
+            result.dealsCreated++
+            // No stamp — dry runs leave items eligible for the next pass.
+            return
+          }
+
+          const dealId = randomUUID()
+          const now = new Date()
 
           await db.insert(deal).values({
             id: dealId,
@@ -548,7 +633,7 @@ export async function generateDeals(
             clientId,
             value: safeValue,
             currency: safeCurrency,
-            isCancelled: false,
+            status: "active",
             userId: session.user.id,
             organizationId: activeOrgId,
             createdAt: now,
@@ -597,6 +682,20 @@ export async function generateDeals(
           return
         }
 
+        if (dryRun) {
+          result.plannedActions.push({
+            sourceItemId: item.id,
+            action: "UPDATE_STAGE",
+            dealName: output.matchedDealName.trim(),
+            clientName: null,
+            stageName: output.updatedStageName.trim() || null,
+            reasoning: output.reasoning.trim(),
+          })
+          result.stageUpdates++
+          // No stamp on dry runs.
+          return
+        }
+
         await db
           .update(deal)
           .set({
@@ -624,7 +723,9 @@ export async function generateDeals(
     },
   )
 
-  if (itemIdsToStamp.length > 0) {
+  // Dry runs never stamp — the whole point is to leave items eligible so the
+  // operator can iterate on the rule and re-run against the same set.
+  if (!dryRun && itemIdsToStamp.length > 0) {
     await db
       .update(sourceItem)
       .set({ dealAnalysisScannedAt: new Date() })
@@ -639,7 +740,9 @@ export async function generateDeals(
       `unknownClient=${result.skippedUnknownClient} ` +
       `unknownStage=${result.skippedUnknownStage} ` +
       `unknownDeal=${result.skippedUnknownDeal} ` +
-      `failed=${result.failed} capped=${result.capped}`,
+      `duplicate=${result.skippedDuplicate} ` +
+      `failed=${result.failed} capped=${result.capped} ` +
+      `dryRun=${result.dryRun}`,
   )
 
   if (result.errors.length > 30) {

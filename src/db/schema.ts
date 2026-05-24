@@ -206,6 +206,21 @@ export const entityStatus = pgEnum("entity_status", [
 
 export type EntityStatus = (typeof entityStatus.enumValues)[number]
 
+// Deal lifecycle axis — orthogonal to the funnel stage (which is a sales
+// outcome). `active` is the default. `cancelled` is a real lost/withdrawn
+// deal kept for win-loss analytics (surfaced via "Include cancelled").
+// `deleted` is a test artifact / mistake: hidden from the board by default
+// AND excluded from deal-discovery's identify/match/move logic, so a fresh
+// re-scan can re-create it without colliding. Distinct from the funnel
+// `Rejected` stage, which stays a real, visible sales outcome.
+export const dealStatus = pgEnum("deal_status", [
+  "active",
+  "cancelled",
+  "deleted",
+])
+
+export type DealStatus = (typeof dealStatus.enumValues)[number]
+
 export const client = pgTable(
   "client",
   {
@@ -421,9 +436,11 @@ export const deal = pgTable(
     // Nullable — operators often create a deal before a value is quoted.
     value: numeric("value", { precision: 14, scale: 2 }),
     currency: text("currency").notNull().default("USD"),
-    // Soft-delete: `Cancelled` is the user's intentional opt-out and is
-    // distinct from the funnel `Rejected` stage (which is a sales outcome).
-    isCancelled: boolean("is_cancelled").notNull().default(false),
+    // Lifecycle status (see `dealStatus` enum). `cancelled` + `deleted` are
+    // both soft-deletes hidden from the board by default; only `active` deals
+    // participate in deal-discovery (identify / match / move). Distinct from
+    // the funnel `Rejected` stage, which is a visible sales outcome.
+    status: dealStatus("status").notNull().default("active"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -441,7 +458,7 @@ export const deal = pgTable(
     index("deal_userId_idx").on(table.userId),
     index("deal_clientId_idx").on(table.clientId),
     index("deal_funnelStageId_idx").on(table.funnelStageId),
-    index("deal_isCancelled_idx").on(table.isCancelled),
+    index("deal_status_idx").on(table.status),
   ],
 )
 

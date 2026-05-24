@@ -138,11 +138,13 @@ export default function ClientsPage() {
   const [contactEmailFilter, setContactEmailFilter] = useState("")
   const [contactStatusFilter, setContactStatusFilter] = useState<string>(ALL)
 
-  // Deals filters: text spans name+description, client narrows by id,
-  // includeCancelled defaults off so the soft-deleted set stays out of view.
+  // Deals filters: text spans name+description, client narrows by id.
+  // includeCancelled / includeDeleted default off so both soft-deleted sets
+  // stay out of view (server returns them; these are client-side toggles).
   const [dealQueryFilter, setDealQueryFilter] = useState("")
   const [dealClientFilter, setDealClientFilter] = useState<string>(ALL)
   const [dealIncludeCancelled, setDealIncludeCancelled] = useState(false)
+  const [dealIncludeDeleted, setDealIncludeDeleted] = useState(false)
 
   const loadClients = useCallback(async () => {
     const res = await fetch("/api/clients")
@@ -157,9 +159,10 @@ export default function ClientsPage() {
   }, [])
 
   const loadDeals = useCallback(async () => {
-    // Always pull cancelled from the server; the include-cancelled
-    // checkbox is a client-side filter, so toggling it doesn't refetch.
-    const res = await fetch("/api/deals?includeCancelled=1")
+    // Always pull cancelled + deleted from the server; the include-cancelled
+    // / include-deleted checkboxes are client-side filters, so toggling them
+    // doesn't refetch.
+    const res = await fetch("/api/deals?includeCancelled=1&includeDeleted=1")
     const data = await res.json()
     setDeals(data.deals ?? [])
   }, [])
@@ -238,7 +241,8 @@ export default function ClientsPage() {
   const filteredDeals = useMemo(() => {
     const q = dealQueryFilter.trim().toLowerCase()
     return deals.filter((d) => {
-      if (!dealIncludeCancelled && d.isCancelled) return false
+      if (!dealIncludeCancelled && d.status === "cancelled") return false
+      if (!dealIncludeDeleted && d.status === "deleted") return false
       if (dealClientFilter !== ALL && d.clientId !== dealClientFilter) {
         return false
       }
@@ -249,7 +253,13 @@ export default function ClientsPage() {
       }
       return true
     })
-  }, [deals, dealQueryFilter, dealClientFilter, dealIncludeCancelled])
+  }, [
+    deals,
+    dealQueryFilter,
+    dealClientFilter,
+    dealIncludeCancelled,
+    dealIncludeDeleted,
+  ])
 
   const dealsByStage = useMemo(() => {
     const map = new Map<string, DealRow[]>()
@@ -273,7 +283,9 @@ export default function ClientsPage() {
   const salesFunnelValue = useMemo(() => {
     let total = 0
     for (const d of deals) {
-      if (d.isCancelled) continue
+      // Only active deals count toward the funnel value — cancelled and
+      // deleted are soft-deleted.
+      if (d.status !== "active") continue
       if (d.value === null) continue
       const v = Number(d.value)
       if (!Number.isFinite(v)) continue
@@ -314,7 +326,8 @@ export default function ClientsPage() {
   const hasDealFilters =
     dealQueryFilter.trim() !== "" ||
     dealClientFilter !== ALL ||
-    dealIncludeCancelled
+    dealIncludeCancelled ||
+    dealIncludeDeleted
 
   const clearClientFilters = () => {
     setClientNameFilter("")
@@ -331,6 +344,7 @@ export default function ClientsPage() {
     setDealQueryFilter("")
     setDealClientFilter(ALL)
     setDealIncludeCancelled(false)
+    setDealIncludeDeleted(false)
   }
 
   return (
@@ -626,6 +640,13 @@ export default function ClientsPage() {
                       }
                     />
                     Include cancelled
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <Checkbox
+                      checked={dealIncludeDeleted}
+                      onCheckedChange={(v) => setDealIncludeDeleted(Boolean(v))}
+                    />
+                    Include deleted
                   </label>
                 </div>
 
