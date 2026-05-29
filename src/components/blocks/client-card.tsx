@@ -120,7 +120,7 @@ export function ClientCard({
             </div>
             {preview.map((c) => (
               <div key={c.id} className="text-sm truncate">
-                <span className="font-medium">{c.name}</span>
+                <span className="font-medium">{c.nameNative || c.name}</span>
                 {c.position && (
                   <span className="text-muted-foreground"> — {c.position}</span>
                 )}

@@ -18,6 +18,7 @@ import { randomUUID } from "crypto"
 export type ClientContactPreview = {
   id: string
   name: string
+  nameNative: string | null
   email: string | null
   phone: string | null
   position: string | null
@@ -96,6 +97,7 @@ export async function listClients(): Promise<ClientRow[]> {
     list.push({
       id: c.id,
       name: c.name,
+      nameNative: c.nameNative,
       email: c.email,
       phone: c.phone,
       position: c.position,

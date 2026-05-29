@@ -88,6 +88,7 @@ export function ClientDetailShell({
       contacts: detail.contacts.map((c) => ({
         id: c.id,
         name: c.name,
+        nameNative: c.nameNative,
         email: c.email,
         phone: c.phone,
         position: c.position,
@@ -217,6 +218,7 @@ export function ClientDetailShell({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
+                      <TableHead>Native name</TableHead>
                       <TableHead className="w-56">Email</TableHead>
                       <TableHead className="w-36">Phone</TableHead>
                       <TableHead className="w-40">Position</TableHead>
@@ -229,6 +231,9 @@ export function ClientDetailShell({
                       <TableRow key={c.id}>
                         <TableCell className="text-sm font-medium truncate">
                           {c.name}
+                        </TableCell>
+                        <TableCell className="text-sm truncate">
+                          {c.nameNative ?? "—"}
                         </TableCell>
                         <TableCell className="text-xs truncate">
                           {c.email ?? "—"}
