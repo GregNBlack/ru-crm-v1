@@ -15,10 +15,19 @@ import { getServerSession } from "@/lib/get-session"
 import {
   getSourceItemMarkdown,
   listSourceItems,
+  type SourceItemRow,
 } from "@/server/source-items"
+import {
+  listClientContent,
+  listContactContent,
+  listDealContent,
+} from "@/server/client-content"
+import { listClients } from "@/server/clients"
+import { listContacts } from "@/server/contacts"
+import { listDeals } from "@/server/deals"
 import { getGatewayId, getModel } from "@/lib/llm-models"
 
-export const maxDuration = 60
+export const maxDuration = 120
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant for the Truffalo platform. You provide clear, accurate, and concise answers. You can help with general questions, analysis, writing, coding, and more.
 
@@ -33,13 +42,31 @@ ${catalog.prompt({ mode: "inline" })}
 
 ## Internal sources tools (when enabled)
 
-When the \`searchSourceItems\` and \`getSourceItemContent\` tools are available, the user has opted in to searching their stored, parsed sources (emails, chats, drive files, dropped files). Use them like this:
+When the source tools are available, the user has opted in to searching their stored, parsed sources (emails, chats, drive files, dropped files) and CRM entities (clients, contacts, deals). Two retrieval paths:
 
-1. Start with \`searchSourceItems\` using a free-text query derived from the user's question. Returns brief hits (id, source, filename/subject, snippet, date) — pick the most relevant 1–3 ids.
-2. Call \`getSourceItemContent\` for each picked id to read the full parsed markdown. Use this to answer detailed questions and to ground your reasoning in real content. Quote sparingly; prefer short, faithful summaries.
-3. The user sees the matched sources rendered as cards directly in the chat — they can open the full content themselves via per-card buttons. **Do not** emit json-render specs to display source bodies; just write your prose answer.
-4. If the search returns zero hits, tell the user plainly. Do not invent content.
-5. Never expose source ids in the user-facing answer — they are internal.`
+### Path A — entity-scoped (preferred when the question names a company, person, or deal)
+
+Use this for questions like "give me a summary about company X", "what's going on with <person>", or "status of the <deal> deal". This grounds the answer in the entity's *curated* relevant content rather than a blind keyword scan. It is a **two-step, user-driven** flow:
+
+**Step 1 — resolve + present candidates (then STOP).**
+1. Pick the entity type and call the matching find tool: a company → \`findClients\`; a person → \`findContacts\`; a deal/opportunity → \`findDeals\`. If you can't tell the type, try the most likely one, then fall back to Path B.
+2. If the find tool returns **zero** matches, say so plainly (don't invent) and stop. Otherwise write ONE short line inviting the user to pick (e.g. "I found these — click one to get a summary from its sources."). **Do NOT call \`getClientContent\` / \`getContactContent\` / \`getDealContent\` yet, and do NOT call \`getSourceItemContent\` yet.** The candidates render as clickable cards; the user picks one. This applies even when there is exactly one match — present it and wait.
+
+**Step 2 — summarize the picked entity (triggered by the user's follow-up message).**
+When the user replies asking to summarize a specific entity (typically "Summarize the client/contact/deal \"<name>\" …" sent by clicking a candidate card):
+3. Find that entity's id in your **previous find-tool result** (the candidate list you just produced) — match on the name they gave. Do not re-run the find tool, and do not ask again. If you genuinely cannot find it in the prior result, then re-run the matching find tool and pick the exact-name match.
+4. Call \`getClientContent\` / \`getContactContent\` / \`getDealContent\` with that id. It returns brief hits (id, source, subject/filename, summary, date) plus the \`matchTerms\` used. If it returns zero hits, tell the user there's no source content for that entity yet.
+5. Call \`getSourceItemContent\` for the most relevant 1–3 hit ids to read full parsed markdown, then write a faithful summary grounded in that content.
+
+### Path B — free-text fallback
+
+When the question isn't about a specific named entity (or no entity resolved), use \`searchSourceItems\` with a free-text query, then \`getSourceItemContent\` on the best 1–3 ids.
+
+### Rules for both paths
+
+- Quote sparingly; prefer short, faithful summaries. If a content tool returns zero hits, tell the user plainly. Do not invent content.
+- The user sees matched sources rendered as cards directly in the chat with their own preview buttons. **Do not** emit json-render specs to display source bodies; just write your prose answer.
+- Never expose source/entity ids in the user-facing answer — they are internal.`
 
 // Model dictionary lives in src/lib/llm-models.ts so the chat picker, the
 // Explore-sources dialog, and this route share one source of truth.
@@ -52,9 +79,205 @@ When the \`searchSourceItems\` and \`getSourceItemContent\` tools are available,
 // different org. The chat route is technically public, so the tools
 // are only registered when an authenticated session AND an active org
 // are both present (enforced by the caller).
+// Maps a relevance-matched source_item row to the compact hit shape the
+// model reasons over (same shape `searchSourceItems` returns). The model
+// reads full bodies via `getSourceItemContent` on a hit's `id`.
+function toSourceHit(row: SourceItemRow) {
+  const md = (row.metadataJson ?? {}) as Record<string, unknown>
+  return {
+    id: row.id,
+    sourceName: row.sourceName,
+    sourceProvider: row.sourceProvider,
+    filename: row.filename,
+    subject: typeof md.subject === "string" ? md.subject : null,
+    snippet: typeof md.snippet === "string" ? md.snippet : null,
+    summary: typeof md.summary === "string" ? md.summary : null,
+    sourceCreatedAt: row.sourceCreatedAt,
+  }
+}
+
 function buildSourceTools(organizationId: string | null) {
   if (!organizationId) return undefined
   return {
+    // ── Entity resolution (find by name) ──────────────────────────────
+    // These three resolve a name the user mentioned into concrete CRM
+    // entities. The model picks the right one from the question, calls it,
+    // and — when more than one row comes back — asks the user to choose
+    // before drilling into content.
+    findClients: tool({
+      description:
+        "Find client companies in the user's CRM by name. Use this FIRST when the user asks about a company (e.g. 'summarize company X'). Returns candidate clients with id, name, funnel phase and website. If more than one matches, ask the user which one before continuing. Then pass the chosen id to getClientContent.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(1)
+          .describe("Company name (or fragment) to search for."),
+        limit: z.number().int().min(1).max(20).default(8),
+      }),
+      execute: async ({ query, limit }) => {
+        const q = query.trim().toLowerCase()
+        const rows = await listClients()
+        const matches = rows
+          .filter((c) => c.name.toLowerCase().includes(q))
+          .slice(0, limit)
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            funnelPhase: c.funnelPhase,
+            webUrl: c.webUrl,
+            status: c.status,
+            email: c.email,
+          }))
+        return { totalMatched: matches.length, matches }
+      },
+    }),
+    findContacts: tool({
+      description:
+        "Find people (contacts) in the user's CRM by name. Use this FIRST when the user asks about a person. Matches the contact's technical name and native-language name. Returns candidate contacts with id, name, email and the client they belong to. If more than one matches, ask the user which one. Then pass the chosen id to getContactContent.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(1)
+          .describe("Person name (or fragment) to search for."),
+        limit: z.number().int().min(1).max(20).default(8),
+      }),
+      execute: async ({ query, limit }) => {
+        const q = query.trim().toLowerCase()
+        const rows = await listContacts()
+        const matches = rows
+          .filter(
+            (c) =>
+              c.name.toLowerCase().includes(q) ||
+              (c.nameNative?.toLowerCase().includes(q) ?? false),
+          )
+          .slice(0, limit)
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            nameNative: c.nameNative,
+            email: c.email,
+            clientName: c.clientName,
+            status: c.status,
+          }))
+        return { totalMatched: matches.length, matches }
+      },
+    }),
+    findDeals: tool({
+      description:
+        "Find sales deals in the user's CRM by name. Use this FIRST when the user asks about a deal or opportunity. Returns candidate deals with id, name, funnel stage, client and value. If more than one matches, ask the user which one. Then pass the chosen id to getDealContent.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(1)
+          .describe("Deal name (or fragment) to search for."),
+        limit: z.number().int().min(1).max(20).default(8),
+      }),
+      execute: async ({ query, limit }) => {
+        const q = query.trim().toLowerCase()
+        const rows = await listDeals({ includeCancelled: true })
+        const matches = rows
+          .filter((d) => d.name.toLowerCase().includes(q))
+          .slice(0, limit)
+          .map((d) => ({
+            id: d.id,
+            name: d.name,
+            funnelStageName: d.funnelStageName,
+            clientName: d.clientName,
+            value: d.value,
+            currency: d.currency,
+            status: d.status,
+          }))
+        return { totalMatched: matches.length, matches }
+      },
+    }),
+    // ── Entity-scoped content (relevant source items) ─────────────────
+    // Given a resolved entity id, surface the source items whose metadata
+    // matches the entity's identifying signals. Returns brief hits — read
+    // the bodies with getSourceItemContent before summarizing.
+    getClientContent: tool({
+      description:
+        "List the source items (emails, chats, files) relevant to one client, matched against the client's name, website, address and its contacts. Pass a clientId from findClients. Returns brief hits — call getSourceItemContent on the most relevant ids to read full content for your summary.",
+      inputSchema: z.object({
+        clientId: z.string().describe("Client id from findClients."),
+        limit: z.number().int().min(1).max(20).default(8),
+        dateFrom: z.iso.datetime().optional(),
+        dateTo: z.iso.datetime().optional(),
+      }),
+      execute: async ({ clientId, limit, dateFrom, dateTo }) => {
+        try {
+          const r = await listClientContent({
+            organizationId,
+            clientId,
+            limit,
+            dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+            dateTo: dateTo ? new Date(dateTo) : undefined,
+          })
+          return {
+            totalMatched: r.total,
+            matchTerms: r.matchTerms,
+            hits: r.rows.map(toSourceHit),
+          }
+        } catch {
+          return { totalMatched: 0, matchTerms: [], hits: [] }
+        }
+      },
+    }),
+    getContactContent: tool({
+      description:
+        "List the source items relevant to one contact (person), matched against their name, native name, email and phone. Pass a contactId from findContacts. Returns brief hits — call getSourceItemContent on the most relevant ids to read full content.",
+      inputSchema: z.object({
+        contactId: z.string().describe("Contact id from findContacts."),
+        limit: z.number().int().min(1).max(20).default(8),
+        dateFrom: z.iso.datetime().optional(),
+        dateTo: z.iso.datetime().optional(),
+      }),
+      execute: async ({ contactId, limit, dateFrom, dateTo }) => {
+        try {
+          const r = await listContactContent({
+            organizationId,
+            contactId,
+            limit,
+            dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+            dateTo: dateTo ? new Date(dateTo) : undefined,
+          })
+          return {
+            totalMatched: r.total,
+            matchTerms: r.matchTerms,
+            hits: r.rows.map(toSourceHit),
+          }
+        } catch {
+          return { totalMatched: 0, matchTerms: [], hits: [] }
+        }
+      },
+    }),
+    getDealContent: tool({
+      description:
+        "List the source items relevant to one deal — its parent client's signals broadened with the deal name and its linked contacts. Pass a dealId from findDeals. Returns brief hits — call getSourceItemContent on the most relevant ids to read full content.",
+      inputSchema: z.object({
+        dealId: z.string().describe("Deal id from findDeals."),
+        limit: z.number().int().min(1).max(20).default(8),
+        dateFrom: z.iso.datetime().optional(),
+        dateTo: z.iso.datetime().optional(),
+      }),
+      execute: async ({ dealId, limit, dateFrom, dateTo }) => {
+        try {
+          const r = await listDealContent({
+            organizationId,
+            dealId,
+            limit,
+            dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+            dateTo: dateTo ? new Date(dateTo) : undefined,
+          })
+          return {
+            totalMatched: r.total,
+            matchTerms: r.matchTerms,
+            hits: r.rows.map(toSourceHit),
+          }
+        } catch {
+          return { totalMatched: 0, matchTerms: [], hits: [] }
+        }
+      },
+    }),
     searchSourceItems: tool({
       description:
         "Search the user's parsed sources (emails, chats, drive files, dropped files) belonging to their organization, by free-text query. Matches against filename and the source's metadata JSON (subjects, snippets, authors). Returns brief hits — call getSourceItemContent on a result's `id` to read the full body.",
@@ -202,10 +425,11 @@ export async function POST(req: Request) {
       system: SYSTEM_PROMPT,
       messages: await convertToModelMessages(messages),
       ...(hasTools ? { tools } : {}),
-      // Bound the search → fetch → answer loop so the model can't
-      // spiral on tool calls. 5 steps is enough for "search → fetch
-      // top 2 → display → answer" with headroom.
-      stopWhen: stepCountIs(5),
+      // Bound the tool-call loop so the model can't spiral. The entity
+      // path is the longest chain: find → (disambiguate) → getEntityContent
+      // → getSourceItemContent ×N → answer, so allow more headroom than the
+      // old free-text-only flow.
+      stopWhen: stepCountIs(10),
     })
 
     const stream = createUIMessageStream({

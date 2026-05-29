@@ -9,14 +9,6 @@ import type { ClientRow } from "@/app/api/clients/route"
 import ClientEditDialog from "@/components/forms/form-client-edit"
 import { ClientLookupDialog } from "@/components/blocks/client-lookup-dialog"
 
-const PHASE_COLOR: Record<string, string> = {
-  awareness: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
-  interest: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
-  decision: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  action: "bg-green-500/15 text-green-600 dark:text-green-300",
-  retention: "bg-purple-500/15 text-purple-600 dark:text-purple-300",
-}
-
 // `initial` is the auto-discovered state — give it a distinct accent so
 // it stands out for review. `suspended` stays muted (archived). `deleted`
 // is the soft-delete (excluded from discovery) — red accent + the card is
@@ -46,22 +38,18 @@ export function ClientCard({
       <CardHeader className="flex flex-row items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <CardTitle className="truncate">{client.name}</CardTitle>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <Badge
-              className={PHASE_COLOR[client.funnelPhase] ?? ""}
-              variant="secondary"
-            >
-              {client.funnelPhase}
-            </Badge>
-            {client.status !== "active" && (
+          {/* Funnel-phase badge intentionally hidden for now — only the
+              non-active status badge is shown. */}
+          {client.status !== "active" && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
               <Badge
                 variant="secondary"
                 className={STATUS_COLOR[client.status] ?? ""}
               >
                 {client.status}
               </Badge>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <ClientLookupDialog

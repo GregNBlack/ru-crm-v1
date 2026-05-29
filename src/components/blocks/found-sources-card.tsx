@@ -21,6 +21,9 @@ type Hit = {
   filename: string | null
   subject: string | null
   snippet: string | null
+  // Present on the getXContent tool outputs (LLM-extracted 1-3 sentence
+  // summary); absent on searchSourceItems hits. Used as a snippet fallback.
+  summary?: string | null
   sourceCreatedAt: string | null
 }
 
@@ -47,7 +50,16 @@ function hitTitle(hit: Hit): string {
   if (hit.subject && hit.subject.trim()) return hit.subject
   if (hit.filename && hit.filename.trim()) return hit.filename
   if (hit.snippet && hit.snippet.trim()) return hit.snippet
+  if (hit.summary && hit.summary.trim()) return hit.summary
   return "(untitled)"
+}
+
+// Secondary line under the title: prefer the raw snippet, fall back to the
+// LLM summary (present on getXContent hits, where snippet is often null).
+function hitSnippet(hit: Hit): string | null {
+  if (hit.snippet && hit.snippet.trim()) return hit.snippet
+  if (hit.summary && hit.summary.trim()) return hit.summary
+  return null
 }
 
 // Sole renderer for the `searchSourceItems` tool output in the chat.
@@ -138,6 +150,7 @@ function FoundSourceCardRow({ hit }: { hit: Hit }) {
   const providerMeta = getProvider(hit.sourceProvider)
   const ProviderIcon = providerMeta.icon
   const title = hitTitle(hit)
+  const snippet = hitSnippet(hit)
 
   // Fetches the markdown via the org-scoped /markdown route, wraps it
   // in a single-element json-render spec, and pushes it to the right-
@@ -204,9 +217,9 @@ function FoundSourceCardRow({ hit }: { hit: Hit }) {
           >
             {title}
           </h4>
-          {hit.snippet && hit.snippet !== title && (
+          {snippet && snippet !== title && (
             <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-              {hit.snippet}
+              {snippet}
             </p>
           )}
         </div>

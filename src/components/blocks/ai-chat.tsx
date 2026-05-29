@@ -103,6 +103,10 @@ import {
 import { cn } from "@/lib/utils"
 import Image from "next/image"
 import { FoundSourcesCard } from "@/components/blocks/found-sources-card"
+import {
+  EntityCandidatesCard,
+  type EntityType,
+} from "@/components/blocks/entity-candidates-card"
 import { MODELS } from "@/lib/llm-models"
 
 // ---------------------------------------------------------------------------
@@ -216,6 +220,18 @@ export function AIChat({ className }: { className?: string }) {
       sendMessage({ text: suggestion })
     },
     [sendMessage],
+  )
+
+  // Fired when the user clicks an entity candidate card — sends a
+  // follow-up message asking the assistant to summarize that entity from
+  // its sources (drives the getXContent → getSourceItemContent → summary
+  // step). Ignored while a response is in flight.
+  const handleEntitySelect = useCallback(
+    (prompt: string) => {
+      if (status === "submitted" || status === "streaming") return
+      sendMessage({ text: prompt })
+    },
+    [sendMessage, status],
   )
 
   const handleSpeechTranscription = useCallback(
@@ -428,6 +444,8 @@ export function AIChat({ className }: { className?: string }) {
                 key={message.id}
                 message={message}
                 isStreaming={isStreaming}
+                isBusy={isLoading}
+                onEntitySelect={handleEntitySelect}
               />
             ))
           )}
@@ -497,9 +515,13 @@ export function AIChat({ className }: { className?: string }) {
 function ChatMessage({
   message,
   isStreaming,
+  isBusy,
+  onEntitySelect,
 }: {
   message: UIMessage
   isStreaming: boolean
+  isBusy: boolean
+  onEntitySelect: (prompt: string) => void
 }) {
   const isAssistant = message.role === "assistant"
   const isLastAssistant = isAssistant && isStreaming
@@ -589,16 +611,57 @@ function ChatMessage({
                   ? (part as { toolName: string }).toolName
                   : part.type.replace("tool-", "")
 
-                // Custom rendering for the internal-source-search tools.
-                // `searchSourceItems` becomes a single "Found Source(s)"
-                // block with a card per hit + per-card buttons; the
-                // companion `getSourceItemContent` calls the model still
-                // makes for grounding are hidden entirely — content
-                // display is now user-driven via the buttons. This
-                // branch is scoped to these two tool names so the
-                // generic Tool render still applies to google_search +
-                // any future tools.
-                if (toolName === "searchSourceItems") {
+                // Custom rendering for the internal-source tools.
+                //
+                // `findClients` / `findContacts` / `findDeals` render as a
+                // list of clickable entity-info cards — clicking one sends
+                // a follow-up message that asks the assistant to summarize
+                // that entity from its sources (it does NOT open a panel).
+                //
+                // `searchSourceItems` and the three `getXContent` tools all
+                // return the same hit shape, so they share the "Found
+                // Source(s)" card render (a card per source + per-card
+                // Preview / Open-in-panel buttons).
+                //
+                // `getSourceItemContent` calls the model makes for grounding
+                // are hidden entirely — content display is user-driven via
+                // the source cards' buttons. Everything else (google_search,
+                // future tools) falls through to the generic Tool render.
+                const entityFindType: EntityType | null =
+                  toolName === "findClients"
+                    ? "client"
+                    : toolName === "findContacts"
+                      ? "contact"
+                      : toolName === "findDeals"
+                        ? "deal"
+                        : null
+                if (entityFindType) {
+                  return (
+                    <EntityCandidatesCard
+                      key={key}
+                      entityType={entityFindType}
+                      state={part.state}
+                      output={
+                        part.state === "output-available"
+                          ? (part as { output?: unknown }).output
+                          : undefined
+                      }
+                      errorText={
+                        part.state === "output-error"
+                          ? (part as { errorText?: string }).errorText
+                          : undefined
+                      }
+                      onSelect={onEntitySelect}
+                      disabled={isBusy}
+                    />
+                  )
+                }
+                if (
+                  toolName === "searchSourceItems" ||
+                  toolName === "getClientContent" ||
+                  toolName === "getContactContent" ||
+                  toolName === "getDealContent"
+                ) {
                   return (
                     <FoundSourcesCard
                       key={key}
