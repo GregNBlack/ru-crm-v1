@@ -4,7 +4,7 @@ import { db } from "@/db/drizzle"
 import { client, contact, sourceItem, type EntityStatus } from "@/db/schema"
 import { and, eq, isNull, ne, or, sql, inArray, gte } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
-import { normaliseCompanyName } from "@/lib/normalise-company-name"
+import { companyMatchKey, personMatchKey } from "@/lib/translit-ru"
 import { isAutomatedEmail } from "@/lib/is-automated-email"
 import {
   domainMatches,
@@ -17,12 +17,27 @@ import { randomUUID } from "crypto"
 
 // ── Types ────────────────────────────────────────────────────────────
 
-/** A company candidate aggregated from `metadata_json.companies`. */
+/** Self-rated confidence for a candidate / link, used to gate the review UI:
+ *  `high` + `medium` are pre-checked, `low` is pre-unchecked (operator opts
+ *  in). Garbage-level signals are dropped before they ever become a
+ *  candidate, so there's no "none" tier. */
+export type DiscoveryConfidence = "high" | "medium" | "low"
+
+/** A company candidate aggregated from `metadata_json.companies` +
+ *  `metadata_json.organizations`. */
 export type ClientCandidate = {
-  /** First-seen original casing — used as the new client.name. */
+  /** Best (fullest) original casing — used as the new client.name. */
   displayName: string
-  /** Canonical dedup key — `normaliseCompanyName(displayName)`. */
+  /** Cross-script canonical dedup key — `companyMatchKey(displayName)`.
+   *  Collapses Cyrillic/Latin + legal-form variants (АСТ ≡ AST ≡ ООО АСТ). */
   normalisedKey: string
+  /** Other spellings of this company seen across the scanned rows (and from
+   *  the parser's `organizations[].aliases`), excluding the displayName.
+   *  Stored on the created client + used for future dedup. */
+  aliases: string[]
+  /** How confident discovery is that this is a real, correctly-named new
+   *  client. Drives the review UI's default check state. */
+  confidence: DiscoveryConfidence
   /** How many scanned source_items mention this company. */
   occurrences: number
   /** Same-run inferred website: set when a participant email's domain's
@@ -52,6 +67,9 @@ export type ContactCandidate = {
    *  (parser's `participantNativeNames`). `null` when none was found.
    *  Becomes contact.name_native. */
   nativeName: string | null
+  /** How confident discovery is that this is a real new contact. Drives the
+   *  review UI's default check state. */
+  confidence: DiscoveryConfidence
   /** How many scanned source_items mention this email. */
   occurrences: number
   /** Sample (capped at 5) source_item ids for context in the preview. */
@@ -67,6 +85,19 @@ export type ContactCandidate = {
     name: string
     email: string | null
   } | null
+}
+
+/** A blank-fill enrichment for an EXISTING client matched by company key
+ *  (cross-script). Carries a discovered website + extra spellings so apply
+ *  can fill a blank `webUrl` and union `aliases` onto a client that already
+ *  exists (and was therefore never offered as a candidate). */
+export type ClientEnrichmentEntry = {
+  /** companyMatchKey of the matched existing client. */
+  normalisedKey: string
+  /** Discovered website (parser-attributed or label-matched), or null. */
+  webUrl: string | null
+  /** Spellings seen for this company — unioned into the client's aliases. */
+  aliases: string[]
 }
 
 /** An email→native-name pairing collected across the scanned rows. */
@@ -95,8 +126,17 @@ export type LinkProposal = {
   contactName: string
   contactEmail: string
   clientName: string
-  /** The client domain the email domain matched on. */
-  matchedDomain: string
+  /** How the contact was attributed to the client:
+   *  - `domain`  — the contact's email domain matched the client's website
+   *    domain (strongest signal).
+   *  - `company` — the source items the contact appears in attribute them to
+   *    a company that matches this client (used when no web domain is known). */
+  matchedVia: "domain" | "company"
+  /** Human-readable basis for the match, shown in the UI (e.g. the matched
+   *  domain, or "company «АСТ»"). */
+  matchedLabel: string
+  /** Confidence in the link, gating the review UI default-check state. */
+  confidence: DiscoveryConfidence
   /** True when this contact matched 2+ clients; we pick the alphabetically
    *  first client name and flag so the UI can warn. */
   ambiguous: boolean
@@ -113,6 +153,10 @@ export type DiscoveryPreview = {
   clientCandidates: ClientCandidate[]
   contactCandidates: ContactCandidate[]
   linkProposals: LinkProposal[]
+  /** Blank-fill enrichments for existing clients (matched by company key but
+   *  not surfaced as candidates because the name matched exactly). Applied
+   *  unconditionally on apply — fill-blanks only, never overwrites. */
+  clientEnrichments: ClientEnrichmentEntry[]
   /** Every email→native-name pairing seen across the scanned rows
    *  (deduped, including emails that are ALREADY contacts). Applied to
    *  fill blank `contact.name_native` on apply — both new and existing. */
@@ -141,6 +185,8 @@ export type ApplyDiscoveryInput = {
     clients: ClientCandidate[]
     contacts: ContactCandidate[]
   }
+  /** Existing-client blank-fill enrichments from the preview. */
+  clientEnrichments?: ClientEnrichmentEntry[]
   /** Native-name pairings from the preview — applied to fill blank
    *  `contact.name_native` on both new and pre-existing contacts. */
   nativeNames: NativeNameEntry[]
@@ -154,6 +200,9 @@ export type ApplyDiscoveryInput = {
 
 export type ApplyDiscoveryResult = {
   clientsCreated: number
+  /** Existing clients that gained aliases / a webUrl from a same-company
+   *  candidate that wasn't created as a separate client. */
+  clientsEnriched: number
   contactsCreated: number
   linksApplied: number
   scannedRowsStamped: number
@@ -278,6 +327,11 @@ function secondLevelLabel(domain: string): string {
   return parts[parts.length - 2]
 }
 
+/** Stable string id for a ClientRef — used to dedup matched clients. */
+function clientRefKey(ref: ClientRef): string {
+  return ref.kind === "existing" ? `e:${ref.id}` : `n:${ref.normalisedKey}`
+}
+
 // ── previewDiscovery — single read-only scan ─────────────────────────
 
 export async function previewDiscovery(opts?: {
@@ -322,6 +376,7 @@ export async function previewDiscovery(opts?: {
       .select({
         id: client.id,
         name: client.name,
+        aliases: client.aliases,
         webUrl: client.webUrl,
         status: client.status,
       })
@@ -332,6 +387,7 @@ export async function previewDiscovery(opts?: {
         id: contact.id,
         name: contact.name,
         nameNative: contact.nameNative,
+        aliases: contact.aliases,
         email: contact.email,
         clientId: contact.clientId,
         status: contact.status,
@@ -340,22 +396,30 @@ export async function previewDiscovery(opts?: {
       .where(eq(contact.organizationId, activeOrgId)),
   ])
 
-  // normalised key → an existing client (first wins) for the possible-
-  // duplicate flag, plus the set of exact (lowercased) existing names so we
-  // can still silently merge truly-identical companies without a prompt.
-  const existingClientByKey = new Map<string, { id: string; name: string }>()
+  // Cross-script match key → an existing client (first wins) for the
+  // possible-duplicate flag, plus the set of exact (lowercased) existing
+  // names/aliases so we can still silently merge truly-identical companies
+  // without a prompt. Both the name AND every stored alias contribute keys,
+  // so a candidate matching a known alias is recognised as the same client.
+  const existingClientByKey = new Map<
+    string,
+    { id: string; name: string; webUrl: string | null }
+  >()
   const exactExistingClientNames = new Set<string>()
   for (const c of existingClients) {
     // `deleted` clients are soft-deleted: skipped here so they neither block
     // re-discovery nor get flagged as a possible duplicate — a fresh re-scan
     // re-creates them (the test-iterate loop).
     if (c.status === "deleted") continue
-    const key = normaliseCompanyName(c.name)
-    if (key && !existingClientByKey.has(key)) {
-      existingClientByKey.set(key, { id: c.id, name: c.name })
+    const spellings = [c.name, ...(c.aliases ?? [])]
+    for (const s of spellings) {
+      const key = companyMatchKey(s)
+      if (key && !existingClientByKey.has(key)) {
+        existingClientByKey.set(key, { id: c.id, name: c.name, webUrl: c.webUrl })
+      }
+      const lower = (s ?? "").trim().toLowerCase()
+      if (lower) exactExistingClientNames.add(lower)
     }
-    const lower = c.name.trim().toLowerCase()
-    if (lower) exactExistingClientNames.add(lower)
   }
   const existingContactEmails = new Set(
     existingContacts
@@ -370,6 +434,10 @@ export async function previewDiscovery(opts?: {
   type ClientBucket = {
     displayName: string
     normalisedKey: string
+    /** All distinct spellings seen (incl. the displayName), original casing. */
+    spellings: Set<string>
+    /** Websites the parser attributed to this company (organizations[].webUrl). */
+    parserWebUrls: Set<string>
     sourceItemIds: Set<string>
   }
   const clientBuckets = new Map<string, ClientBucket>()
@@ -383,6 +451,18 @@ export async function previewDiscovery(opts?: {
 
   // rowId → participant emails, kept for same-run webUrl inference.
   const participantsByRow = new Map<string, Participant[]>()
+
+  // rowId → the set of company match-keys mentioned in that row (from both
+  // `companies` and `organizations`). Used for contact↔client attribution.
+  const rowCompanyKeys = new Map<string, Set<string>>()
+
+  // company match-key → best display name seen (for company-link labels).
+  const companyKeyToName = new Map<string, string>()
+
+  // company match-key → blank-fill enrichment for an EXISTING client that
+  // matched by key (so it's never a candidate). Accumulates a discovered
+  // website + spellings to union into the client's aliases on apply.
+  const enrichByKey = new Map<string, { webUrl: string | null; spellings: Set<string> }>()
 
   // email → native-language name, accumulated across rows (longest wins).
   // Collected for ALL emails — including ones that are already contacts —
@@ -413,32 +493,89 @@ export async function previewDiscovery(opts?: {
   for (const row of rows) {
     const meta = (row.metadataJson as Record<string, unknown> | null) ?? {}
 
-    // Companies
-    const raw = meta.companies
-    if (Array.isArray(raw)) {
-      for (const item of raw) {
+    // Companies — fold the flat `companies` list and the enriched
+    // `organizations` list (name + aliases + webUrl) into one stream of
+    // {spelling, key, webUrl?} signals, keyed cross-script so АСТ ≡ AST.
+    const rowKeys = rowCompanyKeys.get(row.id) ?? new Set<string>()
+    rowCompanyKeys.set(row.id, rowKeys)
+
+    type CompanySignal = { spelling: string; aliases: string[]; webUrl: string }
+    const companySignals: CompanySignal[] = []
+    const rawCompanies = meta.companies
+    if (Array.isArray(rawCompanies)) {
+      for (const item of rawCompanies) {
         if (typeof item !== "string") continue
         const name = item.trim()
+        if (name) companySignals.push({ spelling: name, aliases: [], webUrl: "" })
+      }
+    }
+    const rawOrgs = meta.organizations
+    if (Array.isArray(rawOrgs)) {
+      for (const o of rawOrgs) {
+        if (!o || typeof o !== "object") continue
+        const rec = o as Record<string, unknown>
+        const name = (typeof rec.name === "string" ? rec.name : "").trim()
         if (!name) continue
-        const key = normaliseCompanyName(name)
-        if (!key) continue
-        // Drop only EXACT-name matches (truly the same client → silent merge,
-        // as before). Suffix/format variants (e.g. existing "IN4COM" vs source
-        // "IN4COM GmbH") share the key but differ in name → kept as a
-        // candidate and flagged `possibleDuplicate` below so the operator
-        // decides same-vs-new-branch.
-        if (exactExistingClientNames.has(name.toLowerCase())) continue
-        const existing = clientBuckets.get(key)
-        if (existing) {
-          existing.sourceItemIds.add(row.id)
-        } else {
-          clientBuckets.set(key, {
-            displayName: name,
-            normalisedKey: key,
-            sourceItemIds: new Set([row.id]),
-          })
+        const aliases = Array.isArray(rec.aliases)
+          ? rec.aliases.filter((a): a is string => typeof a === "string").map((a) => a.trim()).filter(Boolean)
+          : []
+        const webUrl = (typeof rec.webUrl === "string" ? rec.webUrl : "").trim()
+        companySignals.push({ spelling: name, aliases, webUrl })
+      }
+    }
+
+    for (const sig of companySignals) {
+      const key = companyMatchKey(sig.spelling)
+      if (!key) continue
+      rowKeys.add(key)
+      if (!companyKeyToName.has(key)) companyKeyToName.set(key, sig.spelling)
+      // Record the row company-key for every alias too (so an alias-only
+      // mention in another row still attributes to the same client).
+      for (const a of sig.aliases) {
+        const ak = companyMatchKey(a)
+        if (ak) {
+          rowKeys.add(ak)
+          if (!companyKeyToName.has(ak)) companyKeyToName.set(ak, a)
         }
       }
+      // Silent-merge only EXACT-name matches against an existing client/alias
+      // (truly the same client). Cross-script / legal-form variants share the
+      // key but differ in spelling → kept as a candidate and flagged
+      // `possibleDuplicate` below so the operator decides same-vs-new-branch.
+      const isExactExisting =
+        exactExistingClientNames.has(sig.spelling.toLowerCase()) ||
+        sig.aliases.some((a) => exactExistingClientNames.has(a.toLowerCase()))
+      // If this company matches an EXISTING client (by key), record a
+      // blank-fill enrichment regardless of whether it's also a candidate —
+      // so an existing client with no website can still gain one from a
+      // freshly-discovered signal (parser webUrl or a label-matched domain).
+      if (existingClientByKey.has(key)) {
+        const e = enrichByKey.get(key) ?? { webUrl: null, spellings: new Set<string>() }
+        e.spellings.add(sig.spelling)
+        for (const a of sig.aliases) e.spellings.add(a)
+        if (!e.webUrl && sig.webUrl && extractWebsiteDomain(sig.webUrl)) {
+          e.webUrl = sig.webUrl
+        }
+        enrichByKey.set(key, e)
+      }
+
+      const bucket = clientBuckets.get(key)
+      if (bucket) {
+        bucket.sourceItemIds.add(row.id)
+        bucket.spellings.add(sig.spelling)
+        for (const a of sig.aliases) bucket.spellings.add(a)
+        if (sig.webUrl) bucket.parserWebUrls.add(sig.webUrl)
+      } else if (!isExactExisting) {
+        clientBuckets.set(key, {
+          displayName: sig.spelling,
+          normalisedKey: key,
+          spellings: new Set([sig.spelling, ...sig.aliases]),
+          parserWebUrls: sig.webUrl ? new Set([sig.webUrl]) : new Set(),
+          sourceItemIds: new Set([row.id]),
+        })
+      }
+      // Note: when isExactExisting, we still recorded rowKeys above so the
+      // company can attribute contacts to the existing client via linking.
     }
 
     // Participants
@@ -505,28 +642,75 @@ export async function previewDiscovery(opts?: {
     }
   }
 
-  // ── 4. Same-run webUrl inference for new client candidates ──────────
+  // ── 4. webUrl inference + confidence for new client candidates ──────
+  // Resolution order (strongest → weakest), each carrying a confidence floor:
+  //   1. Parser-attributed website (organizations[].webUrl)        → high
+  //   2. A participant business domain whose label matches the name → high
+  //   3. The ONLY business (non-freemail) domain across the rows    → medium
+  // Step 3 is the relaxed inference that fixes the АСТ ↔ ast-inter.ru case:
+  // the domain label ("ast-inter") doesn't string-match the name ("АСТ"), but
+  // it's the sole business domain co-occurring with the company, so we adopt
+  // it (and let the confidence + review UI catch the rare false positive).
   const clientCandidates: ClientCandidate[] = Array.from(
     clientBuckets.values(),
   ).map((b) => {
-    let inferredWebUrl: string | null = null
+    // Collect the distinct non-freemail participant domains across this
+    // candidate's rows.
+    const businessDomains = new Set<string>()
+    let labelMatchUrl: string | null = null
     for (const rowId of b.sourceItemIds) {
-      const participants = participantsByRow.get(rowId) ?? []
-      for (const p of participants) {
+      for (const p of participantsByRow.get(rowId) ?? []) {
         const domain = extractEmailDomain(p.email)
         if (!domain || isFreemailDomain(domain)) continue
+        businessDomains.add(domain)
         const label = secondLevelLabel(domain)
-        if (label && normaliseCompanyName(label) === b.normalisedKey) {
-          inferredWebUrl = `https://${domain}`
-          break
+        if (!labelMatchUrl && label && companyMatchKey(label) === b.normalisedKey) {
+          labelMatchUrl = `https://${domain}`
         }
       }
-      if (inferredWebUrl) break
     }
+
+    let inferredWebUrl: string | null = null
+    let webUrlLevel: DiscoveryConfidence | null = null
+    // 1. Parser-attributed website.
+    for (const u of b.parserWebUrls) {
+      if (extractWebsiteDomain(u)) {
+        inferredWebUrl = u
+        webUrlLevel = "high"
+        break
+      }
+    }
+    // 2. Label match.
+    if (!inferredWebUrl && labelMatchUrl) {
+      inferredWebUrl = labelMatchUrl
+      webUrlLevel = "high"
+    }
+    // 3. Sole business domain.
+    if (!inferredWebUrl && businessDomains.size === 1) {
+      inferredWebUrl = `https://${Array.from(businessDomains)[0]}`
+      webUrlLevel = "medium"
+    }
+
+    const occurrences = b.sourceItemIds.size
+    const aliases = Array.from(b.spellings).filter(
+      (s) => s.trim() && s !== b.displayName,
+    )
+    // Confidence: a determinable website OR repeated mention → high; a single
+    // mention with weaker corroboration → medium; a lone, uncorroborated
+    // single mention → low (pre-unchecked for review).
+    const confidence: DiscoveryConfidence =
+      webUrlLevel === "high" || occurrences >= 2
+        ? "high"
+        : inferredWebUrl || aliases.length > 0
+          ? "medium"
+          : "low"
+
     return {
       displayName: b.displayName,
       normalisedKey: b.normalisedKey,
-      occurrences: b.sourceItemIds.size,
+      aliases,
+      confidence,
+      occurrences,
       inferredWebUrl,
       sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
       // Key matches an existing client but the name differs (exact matches
@@ -555,8 +739,11 @@ export async function previewDiscovery(opts?: {
     const domain = email ? extractEmailDomain(email) : ""
     if (!domain) continue
     const names = new Set<string>()
-    for (const n of [c.name, c.nameNative]) {
-      const norm = normalisePersonName(n ?? "")
+    // personMatchKey transliterates + token-sorts, so "Богданов Евгений",
+    // "Евгений Богданов" and "Bogdanov Evgeniy" all collapse to one key —
+    // catching cross-script + name-order duplicates, not just exact spellings.
+    for (const n of [c.name, c.nameNative, ...(c.aliases ?? [])]) {
+      const norm = personMatchKey(n ?? "")
       if (norm.length >= 2) names.add(norm)
     }
     if (names.size === 0) continue
@@ -577,7 +764,7 @@ export async function previewDiscovery(opts?: {
       // who happen to share a common name.
       const candNames = new Set<string>()
       for (const n of [b.bestName, nativeName ?? ""]) {
-        const norm = normalisePersonName(n)
+        const norm = personMatchKey(n)
         if (norm.length >= 2) candNames.add(norm)
       }
       const domain = extractEmailDomain(b.email)
@@ -597,11 +784,24 @@ export async function previewDiscovery(opts?: {
           }
         }
       }
+      // Confidence: a person at a real company domain, or one mentioned more
+      // than once, is high; a single mention from a freemail address is
+      // medium; a single freemail mention with no name is low.
+      const occurrences = b.sourceItemIds.size
+      const isBusiness = domain ? !isFreemailDomain(domain) : false
+      const hasName = normalisePersonName(b.bestName).length >= 2
+      const confidence: DiscoveryConfidence =
+        isBusiness || occurrences >= 2
+          ? "high"
+          : hasName
+            ? "medium"
+            : "low"
       return {
         displayName: b.bestName,
         email: b.email,
         nativeName,
-        occurrences: b.sourceItemIds.size,
+        confidence,
+        occurrences,
         sampleSourceItemIds: Array.from(b.sourceItemIds).slice(0, 5),
         possibleDuplicate,
       }
@@ -610,6 +810,18 @@ export async function previewDiscovery(opts?: {
       (a, b) =>
         b.occurrences - a.occurrences || a.email.localeCompare(b.email),
     )
+
+  // Existing-client enrichments: only emit when there's something to apply
+  // (a discovered webUrl or extra spellings beyond what the client stores).
+  const clientEnrichments: ClientEnrichmentEntry[] = Array.from(
+    enrichByKey.entries(),
+  )
+    .map(([normalisedKey, e]) => ({
+      normalisedKey,
+      webUrl: e.webUrl,
+      aliases: Array.from(e.spellings).filter((s) => s.trim()),
+    }))
+    .filter((e) => e.webUrl || e.aliases.length > 0)
 
   // All native-name pairings seen this run — keyed by email, including
   // emails that are already contacts (apply backfills those too).
@@ -630,64 +842,148 @@ export async function previewDiscovery(opts?: {
   )
 
   // ── 5. Build link proposals ─────────────────────────────────────────
-  // Link side "clients": DB clients with a webUrl + new candidates with an
-  // inferred one. Link side "contacts": DB unlinked contacts + new candidates.
-  type LinkClient = { ref: ClientRef; name: string; domain: string }
-  const linkClients: LinkClient[] = []
+  // Two attribution signals, domain-first (one proposal per contact):
+  //   A. DOMAIN  — the contact's email domain matches a client's website
+  //                domain. Strongest; works for both existing clients (with a
+  //                webUrl) and new candidates (with an inferred webUrl).
+  //   B. COMPANY — the source items the contact appears in attribute them to a
+  //                company that matches a client. Used when no web domain is
+  //                known (the common case — most clients have no webUrl). Only
+  //                business-email contacts with a SINGLE, consistently-
+  //                attributed company qualify, to avoid linking the other side
+  //                of a thread (e.g. the vendor) to the discussed company.
+
+  // Link-side clients indexed two ways: by website domain (A) and by company
+  // match-key (B). Existing + new candidates both participate in BOTH indexes.
+  type LinkClient = { ref: ClientRef; name: string }
+  const clientByDomain: { client: LinkClient; domain: string }[] = []
+  const clientByCompanyKey = new Map<string, LinkClient[]>()
+  const addClientKey = (lc: LinkClient, key: string) => {
+    if (!key) return
+    const arr = clientByCompanyKey.get(key) ?? []
+    arr.push(lc)
+    clientByCompanyKey.set(key, arr)
+  }
   for (const c of existingClients) {
     if (c.status === "suspended" || c.status === "deleted") continue
+    const lc: LinkClient = { ref: { kind: "existing", id: c.id }, name: c.name }
     const url = (c.webUrl ?? "").trim()
-    if (!url) continue
-    const domain = extractWebsiteDomain(url)
-    if (!domain) continue
-    linkClients.push({ ref: { kind: "existing", id: c.id }, name: c.name, domain })
+    const domain = url ? extractWebsiteDomain(url) : ""
+    if (domain) clientByDomain.push({ client: lc, domain })
+    for (const s of [c.name, ...(c.aliases ?? [])]) addClientKey(lc, companyMatchKey(s))
   }
   for (const cand of clientCandidates) {
-    if (!cand.inferredWebUrl) continue
-    const domain = extractWebsiteDomain(cand.inferredWebUrl)
-    if (!domain) continue
-    linkClients.push({
+    const lc: LinkClient = {
       ref: { kind: "new", normalisedKey: cand.normalisedKey },
       name: cand.displayName,
-      domain,
-    })
+    }
+    if (cand.inferredWebUrl) {
+      const domain = extractWebsiteDomain(cand.inferredWebUrl)
+      if (domain) clientByDomain.push({ client: lc, domain })
+    }
+    addClientKey(lc, cand.normalisedKey)
+    for (const a of cand.aliases) addClientKey(lc, companyMatchKey(a))
   }
 
-  type LinkContact = { ref: ContactRef; name: string; email: string }
+  // Link-side contacts: DB unlinked contacts + new candidates, with the set of
+  // rows each appears in (for company attribution).
+  type LinkContact = { ref: ContactRef; name: string; email: string; rows: Set<string> }
+  const emailToRows = new Map<string, Set<string>>()
+  for (const [rowId, participants] of participantsByRow) {
+    for (const p of participants) {
+      const set = emailToRows.get(p.email) ?? new Set<string>()
+      set.add(rowId)
+      emailToRows.set(p.email, set)
+    }
+  }
   const linkContacts: LinkContact[] = []
   for (const c of existingContacts) {
     if (c.clientId) continue
     if (c.status === "suspended" || c.status === "deleted") continue
     const email = (c.email ?? "").trim()
     if (!email) continue
-    linkContacts.push({ ref: { kind: "existing", id: c.id }, name: c.name, email })
+    linkContacts.push({
+      ref: { kind: "existing", id: c.id },
+      name: c.name,
+      email,
+      rows: emailToRows.get(email.toLowerCase()) ?? new Set(),
+    })
   }
   for (const cand of contactCandidates) {
     linkContacts.push({
       ref: { kind: "new", email: cand.email },
       name: cand.displayName || cand.email,
       email: cand.email,
+      rows: emailToRows.get(cand.email) ?? new Set(),
     })
   }
 
   const linkProposals: LinkProposal[] = []
   for (const lc of linkContacts) {
     const emailDomain = extractEmailDomain(lc.email)
-    if (!emailDomain || isFreemailDomain(emailDomain)) continue
-    const matches = linkClients.filter((cl) =>
-      domainMatches(emailDomain, cl.domain),
+    const isFreemail = !emailDomain || isFreemailDomain(emailDomain)
+
+    // A. Domain attribution (skip freemail — gmail can't identify a company).
+    if (!isFreemail) {
+      const matches = clientByDomain.filter((cl) =>
+        domainMatches(emailDomain, cl.domain),
+      )
+      if (matches.length > 0) {
+        matches.sort((a, b) => a.client.name.localeCompare(b.client.name))
+        const picked = matches[0]
+        linkProposals.push({
+          contact: lc.ref,
+          client: picked.client.ref,
+          contactName: lc.name,
+          contactEmail: lc.email,
+          clientName: picked.client.name,
+          matchedVia: "domain",
+          matchedLabel: picked.domain,
+          confidence: matches.length > 1 ? "medium" : "high",
+          ambiguous: matches.length > 1,
+        })
+        continue // one proposal per contact; domain wins.
+      }
+    }
+
+    // B. Company attribution — only for business-email contacts whose rows
+    // consistently attribute them to exactly one matchable company.
+    if (isFreemail || lc.rows.size === 0) continue
+    const keyCounts = new Map<string, number>()
+    for (const rowId of lc.rows) {
+      for (const k of rowCompanyKeys.get(rowId) ?? []) {
+        keyCounts.set(k, (keyCounts.get(k) ?? 0) + 1)
+      }
+    }
+    // Keys attributed in ALL of the contact's rows (consistent attribution).
+    const consistentKeys = Array.from(keyCounts.entries())
+      .filter(([, n]) => n === lc.rows.size)
+      .map(([k]) => k)
+      .filter((k) => clientByCompanyKey.has(k))
+    if (consistentKeys.length === 0) continue
+    // Gather distinct matched clients across the consistent keys.
+    const matchedClients = new Map<string, LinkClient>()
+    for (const k of consistentKeys) {
+      for (const cl of clientByCompanyKey.get(k) ?? []) {
+        matchedClients.set(clientRefKey(cl.ref), cl)
+      }
+    }
+    const arr = Array.from(matchedClients.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
     )
-    if (matches.length === 0) continue
-    matches.sort((a, b) => a.name.localeCompare(b.name))
-    const picked = matches[0]
+    const picked = arr[0]
+    const companyName =
+      companyKeyToName.get(consistentKeys[0]) ?? picked.name
     linkProposals.push({
       contact: lc.ref,
       client: picked.ref,
       contactName: lc.name,
       contactEmail: lc.email,
       clientName: picked.name,
-      matchedDomain: picked.domain,
-      ambiguous: matches.length > 1,
+      matchedVia: "company",
+      matchedLabel: `company «${companyName}»`,
+      confidence: arr.length > 1 ? "low" : "medium",
+      ambiguous: arr.length > 1,
     })
   }
   linkProposals.sort((a, b) => a.contactName.localeCompare(b.contactName))
@@ -698,6 +994,7 @@ export async function previewDiscovery(opts?: {
     clientCandidates,
     contactCandidates,
     linkProposals,
+    clientEnrichments,
     nativeNames,
     phones,
     positions,
@@ -716,16 +1013,35 @@ export async function applyDiscovery(
   // are excluded — same as the preview-side dedup — so a key that only
   // collides with a soft-deleted client doesn't block the re-create.
   const existingClients = await db
-    .select({ id: client.id, name: client.name })
+    .select({
+      id: client.id,
+      name: client.name,
+      aliases: client.aliases,
+      webUrl: client.webUrl,
+    })
     .from(client)
     .where(
       and(eq(client.organizationId, activeOrgId), ne(client.status, "deleted")),
     )
-  const existingClientKeys = new Set(
-    existingClients
-      .map((c) => normaliseCompanyName(c.name))
-      .filter((k) => k.length > 0),
-  )
+  // key → existing client (cross-script, alias-aware). Used both to block
+  // accidental dup creation and to backfill aliases / webUrl onto the match.
+  const existingClientByKey = new Map<
+    string,
+    { id: string; webUrl: string | null; aliases: string[] }
+  >()
+  for (const c of existingClients) {
+    for (const s of [c.name, ...(c.aliases ?? [])]) {
+      const key = companyMatchKey(s)
+      if (key && !existingClientByKey.has(key)) {
+        existingClientByKey.set(key, {
+          id: c.id,
+          webUrl: c.webUrl,
+          aliases: c.aliases ?? [],
+        })
+      }
+    }
+  }
+  const existingClientKeys = new Set(existingClientByKey.keys())
 
   const selectedClientKeys = new Set(input.selectedClientKeys)
   const toCreateClients = input.candidates.clients.filter((c) => {
@@ -751,6 +1067,9 @@ export async function applyDiscovery(
       email: null,
       address: null,
       webUrl: c.inferredWebUrl || null,
+      // Record the alternate spellings discovery folded together so future
+      // dedup / attribution recognises this company under any of them.
+      aliases: c.aliases && c.aliases.length > 0 ? c.aliases : null,
       funnelPhase: "awareness" as const,
       status: "initial" as const,
       userId: session.user.id,
@@ -764,6 +1083,63 @@ export async function applyDiscovery(
       const cand = toCreateClients.find((c) => c.displayName === r.name)
       if (cand) newClientKeyToId.set(cand.normalisedKey, r.id)
     }
+  }
+
+  // ── 1b/1c. Enrich EXISTING clients (fill-blanks only, never overwrite) ──
+  // Two sources feed this:
+  //   1b. A candidate flagged `possibleDuplicate` and left unchecked — the
+  //       same company under a different spelling (existing "АСТ" + source
+  //       "AST"). Don't create a dup; fold the spelling into the client.
+  //   1c. `clientEnrichments` — exact-name matches that were never offered as
+  //       a candidate, carrying a freshly-discovered website / spellings.
+  // Both union new spellings into `aliases` and fill a blank `webUrl`.
+  let clientsEnriched = 0
+  const createdKeys = new Set(toCreateClients.map((c) => c.normalisedKey))
+  // Fill-blanks helper, idempotent across calls in one apply (mutates the
+  // in-memory match so a second touch sees the new state; counts a client
+  // at most once).
+  const enrichedClientIds = new Set<string>()
+  const enrichExistingClient = async (
+    key: string,
+    webUrl: string | null,
+    spellings: string[],
+  ) => {
+    const match = existingClientByKey.get(key)
+    if (!match) return
+    const newAliases = spellings.map((s) => s.trim()).filter(Boolean)
+    const merged = Array.from(new Set([...(match.aliases ?? []), ...newAliases]))
+    const aliasesChanged = merged.length !== (match.aliases?.length ?? 0)
+    const fillWebUrl = !match.webUrl && webUrl ? webUrl : null
+    if (!aliasesChanged && !fillWebUrl) return
+    await db
+      .update(client)
+      .set({
+        ...(aliasesChanged ? { aliases: merged } : {}),
+        ...(fillWebUrl ? { webUrl: fillWebUrl } : {}),
+      })
+      .where(eq(client.id, match.id))
+    // Reflect the change locally so a later pass doesn't re-fill / miss it.
+    match.aliases = merged
+    if (fillWebUrl) match.webUrl = fillWebUrl
+    if (!enrichedClientIds.has(match.id)) {
+      enrichedClientIds.add(match.id)
+      clientsEnriched++
+    }
+  }
+
+  // 1b — candidates not created.
+  for (const cand of input.candidates.clients) {
+    if (createdKeys.has(cand.normalisedKey)) continue
+    if (!existingClientByKey.has(cand.normalisedKey)) continue
+    await enrichExistingClient(cand.normalisedKey, cand.inferredWebUrl, [
+      cand.displayName,
+      ...cand.aliases,
+    ])
+  }
+  // 1c — exact-name existing clients carrying a discovered website / spellings.
+  for (const e of input.clientEnrichments ?? []) {
+    if (createdKeys.has(e.normalisedKey)) continue
+    await enrichExistingClient(e.normalisedKey, e.webUrl, e.aliases)
   }
 
   // ── 2. Insert contacts ──────────────────────────────────────────────
@@ -976,6 +1352,7 @@ export async function applyDiscovery(
 
   return {
     clientsCreated: createdClients.length,
+    clientsEnriched,
     contactsCreated: createdContacts.length,
     linksApplied,
     scannedRowsStamped,

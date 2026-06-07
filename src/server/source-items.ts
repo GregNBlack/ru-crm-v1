@@ -95,7 +95,14 @@ export async function upsertSourceItem(
     .onConflictDoUpdate({
       target: [sourceItem.sourceId, sourceItem.externalId],
       set: {
-        metadataJson: input.metadataJson ?? {},
+        // MERGE, don't overwrite. A re-sync only carries the sync-time
+        // envelope fields (subject/snippet/from/to/cc/bcc/attachmentCount).
+        // Overwriting `metadata_json` wholesale would destroy the parse-time
+        // analysis keys (summary/companies/products/participantDetails/…) that
+        // `markParsed` merged in via jsonb `||` — and those drive discovery,
+        // cards and deals. `existing || sync` refreshes the envelope keys
+        // while preserving every analysis key (the two sets never collide).
+        metadataJson: sql`coalesce(${sourceItem.metadataJson}, '{}'::jsonb) || ${JSON.stringify(input.metadataJson ?? {})}::jsonb`,
         externalUrl: input.externalUrl ?? null,
         threadExternalId: input.threadExternalId ?? null,
         filename: input.filename ?? null,

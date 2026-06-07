@@ -10,9 +10,12 @@ import {
   emailsToDomainUrls,
   extractUrls,
   filterMentionedPeople,
+  filterOrganizations,
   filterParticipantDetails,
   MENTIONED_PEOPLE_PROMPT,
   mentionedPersonSchema,
+  ORGANIZATIONS_PROMPT,
+  organizationDetailSchema,
   PARTICIPANT_DETAILS_PROMPT,
   participantDetailSchema,
   uniqueStrings,
@@ -73,6 +76,11 @@ const analysisSchema = z.object({
   companies: z
     .array(z.string())
     .describe("Names of companies or brands mentioned in the body."),
+  organizations: z
+    .array(organizationDetailSchema)
+    .describe(
+      "Structured, deduped companies: one entry per distinct real-world company with its alternate spellings + website. See the system prompt for emission rules.",
+    ),
   products: z
     .array(z.string())
     .describe("Names of products mentioned in the body."),
@@ -161,6 +169,8 @@ Extract structured metadata and convert the body to clean readable markdown. Nev
 ${MENTIONED_PEOPLE_PROMPT}
 
 For email specifically: the "author/sender" is the From: address; recipients (To/Cc/Bcc) are also captured elsewhere — don't include them in mentionedPeople either. Only mention third parties referenced inside the body. When inferring organization from the sender's affiliation, derive the sender's company from their email domain (e.g. sender alice@acme.com → "Acme" as the inferred org).
+
+${ORGANIZATIONS_PROMPT}
 
 ${PARTICIPANT_DETAILS_PROMPT}`
 
@@ -324,6 +334,7 @@ export async function parseEmailMessage(
         reason: analysis.relevance.reason,
       },
       mentionedPeople: filterMentionedPeople(analysis.mentionedPeople ?? []),
+      organizations: filterOrganizations(analysis.organizations ?? []),
       // Native name + phone are only kept for actual envelope addresses
       // (sender + recipients), lowercased to match how discovery keys
       // participants.

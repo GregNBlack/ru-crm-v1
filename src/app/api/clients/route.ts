@@ -24,12 +24,14 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, phone, email, address, webUrl, funnelPhase, status } = body
+    const { name, aliases, phone, email, address, webUrl, funnelPhase, status } =
+      body
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 })
     }
     const result = await createClient({
       name,
+      aliases,
       phone,
       email,
       address,
@@ -46,13 +48,23 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, name, phone, email, address, webUrl, funnelPhase, status } =
-      body
+    const {
+      id,
+      name,
+      aliases,
+      phone,
+      email,
+      address,
+      webUrl,
+      funnelPhase,
+      status,
+    } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
     await updateClient(id, {
       name,
+      aliases,
       phone,
       email,
       address,

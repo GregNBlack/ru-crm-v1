@@ -10,6 +10,7 @@ export type ContactRow = {
   id: string
   name: string
   nameNative: string | null
+  aliases: string[] | null
   phone: string | null
   email: string | null
   position: string | null
@@ -80,6 +81,7 @@ export async function listContacts(): Promise<ContactRow[]> {
     id: r.contact.id,
     name: r.contact.name,
     nameNative: r.contact.nameNative,
+    aliases: r.contact.aliases,
     phone: r.contact.phone,
     email: r.contact.email,
     position: r.contact.position,
@@ -111,9 +113,26 @@ export async function listClientOptions(): Promise<ClientOption[]> {
   return rows
 }
 
+/** Trim, drop empties + dups; return null for an empty list. */
+function cleanAliases(raw: string[] | null | undefined): string[] | null {
+  if (!Array.isArray(raw)) return null
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const a of raw) {
+    const t = (typeof a === "string" ? a : "").trim()
+    if (!t) continue
+    const lower = t.toLowerCase()
+    if (seen.has(lower)) continue
+    seen.add(lower)
+    out.push(t)
+  }
+  return out.length > 0 ? out : null
+}
+
 export async function createContact(data: {
   name: string
   nameNative?: string | null
+  aliases?: string[] | null
   phone?: string | null
   email?: string | null
   position?: string | null
@@ -131,6 +150,7 @@ export async function createContact(data: {
     id,
     name: data.name.trim(),
     nameNative: data.nameNative?.trim() || null,
+    aliases: cleanAliases(data.aliases),
     phone: data.phone?.trim() || null,
     email: data.email?.trim() || null,
     position: data.position?.trim() || null,
@@ -149,6 +169,7 @@ export async function updateContact(
   data: {
     name?: string
     nameNative?: string | null
+    aliases?: string[] | null
     phone?: string | null
     email?: string | null
     position?: string | null
@@ -172,6 +193,9 @@ export async function updateContact(
       ...(data.name !== undefined ? { name: data.name.trim() } : {}),
       ...(data.nameNative !== undefined
         ? { nameNative: data.nameNative?.trim() || null }
+        : {}),
+      ...(data.aliases !== undefined
+        ? { aliases: cleanAliases(data.aliases) }
         : {}),
       ...(data.phone !== undefined
         ? { phone: data.phone?.trim() || null }

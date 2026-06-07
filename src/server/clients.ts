@@ -28,6 +28,7 @@ export type ClientContactPreview = {
 export type ClientRow = {
   id: string
   name: string
+  aliases: string[] | null
   phone: string | null
   email: string | null
   address: string | null
@@ -109,6 +110,7 @@ export async function listClients(): Promise<ClientRow[]> {
   return rows.map((r) => ({
     id: r.client.id,
     name: r.client.name,
+    aliases: r.client.aliases,
     phone: r.client.phone,
     email: r.client.email,
     address: r.client.address,
@@ -124,8 +126,25 @@ export async function listClients(): Promise<ClientRow[]> {
   }))
 }
 
+/** Trim, drop empties + dups; return null for an empty list. */
+function cleanAliases(raw: string[] | null | undefined): string[] | null {
+  if (!Array.isArray(raw)) return null
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const a of raw) {
+    const t = (typeof a === "string" ? a : "").trim()
+    if (!t) continue
+    const lower = t.toLowerCase()
+    if (seen.has(lower)) continue
+    seen.add(lower)
+    out.push(t)
+  }
+  return out.length > 0 ? out : null
+}
+
 export async function createClient(data: {
   name: string
+  aliases?: string[] | null
   phone?: string | null
   email?: string | null
   address?: string | null
@@ -141,6 +160,7 @@ export async function createClient(data: {
   await db.insert(client).values({
     id,
     name: data.name.trim(),
+    aliases: cleanAliases(data.aliases),
     phone: data.phone?.trim() || null,
     email: data.email?.trim() || null,
     address: data.address?.trim() || null,
@@ -159,6 +179,7 @@ export async function updateClient(
   clientId: string,
   data: {
     name?: string
+    aliases?: string[] | null
     phone?: string | null
     email?: string | null
     address?: string | null
@@ -178,6 +199,9 @@ export async function updateClient(
     .update(client)
     .set({
       ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+      ...(data.aliases !== undefined
+        ? { aliases: cleanAliases(data.aliases) }
+        : {}),
       ...(data.phone !== undefined
         ? { phone: data.phone?.trim() || null }
         : {}),

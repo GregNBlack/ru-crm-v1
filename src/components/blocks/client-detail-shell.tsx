@@ -74,6 +74,7 @@ export function ClientDetailShell({
     () => ({
       id: detail.id,
       name: detail.name,
+      aliases: detail.aliases,
       phone: detail.phone,
       email: detail.email,
       address: detail.address,

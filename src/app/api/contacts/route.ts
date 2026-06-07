@@ -34,13 +34,15 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, nameNative, phone, email, position, clientId, status } = body
+    const { name, nameNative, aliases, phone, email, position, clientId, status } =
+      body
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 })
     }
     const result = await createContact({
       name,
       nameNative,
+      aliases,
       phone,
       email,
       position,
@@ -56,14 +58,24 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, name, nameNative, phone, email, position, clientId, status } =
-      body
+    const {
+      id,
+      name,
+      nameNative,
+      aliases,
+      phone,
+      email,
+      position,
+      clientId,
+      status,
+    } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
     }
     await updateContact(id, {
       name,
       nameNative,
+      aliases,
       phone,
       email,
       position,

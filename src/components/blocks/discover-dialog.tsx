@@ -117,22 +117,23 @@ export function DiscoverDialog({
 
         const c: Record<string, boolean> = {}
         // Pre-uncheck likely duplicates (name variant of an existing client)
-        // so they aren't created by default — the operator opts in to create
-        // a separate client (e.g. a different branch) after reviewing.
+        // AND low-confidence candidates so they aren't created by default —
+        // the operator opts in after reviewing.
         for (const cand of dp.clientCandidates)
-          c[cand.normalisedKey] = !cand.possibleDuplicate
+          c[cand.normalisedKey] =
+            !cand.possibleDuplicate && cand.confidence !== "low"
         setClientChecked(c)
 
         const ct: Record<string, boolean> = {}
-        // Pre-uncheck likely duplicates so they aren't created by default —
-        // the operator opts in after reviewing the flagged match.
         for (const cand of dp.contactCandidates)
-          ct[cand.email] = !cand.possibleDuplicate
+          ct[cand.email] = !cand.possibleDuplicate && cand.confidence !== "low"
         setContactChecked(ct)
         setContactNameOverrides({})
 
         const lk: Record<string, boolean> = {}
-        for (const lp of dp.linkProposals) lk[linkKey(lp)] = true
+        // Low-confidence links (ambiguous company attribution) start unchecked.
+        for (const lp of dp.linkProposals)
+          lk[linkKey(lp)] = lp.confidence !== "low"
         setLinkChecked(lk)
 
         setPhase("preview")
@@ -256,6 +257,7 @@ export function DiscoverDialog({
               clients: preview.clientCandidates,
               contacts: preview.contactCandidates,
             },
+            clientEnrichments: preview.clientEnrichments,
             nativeNames: preview.nativeNames,
             phones: preview.phones,
             positions: preview.positions,
@@ -268,6 +270,7 @@ export function DiscoverDialog({
           `${result.clientsCreated} client${result.clientsCreated === 1 ? "" : "s"} · ` +
             `${result.contactsCreated} contact${result.contactsCreated === 1 ? "" : "s"} · ` +
             `${result.linksApplied} link${result.linksApplied === 1 ? "" : "s"}` +
+            (result.clientsEnriched ? ` · ${result.clientsEnriched} enriched` : "") +
             ` · ${result.scannedRowsStamped} reviewed`,
         )
         onApplied()
@@ -549,6 +552,23 @@ function Section({
   )
 }
 
+// Small coloured pill conveying discovery's self-rated confidence. `high` is
+// quiet (it's the happy path); `medium` / `low` stand out so the operator
+// knows what to double-check.
+function ConfidenceBadge({ level }: { level: "high" | "medium" | "low" }) {
+  if (level === "high")
+    return (
+      <Badge variant="secondary" className="text-[10px] px-1 py-0">
+        high
+      </Badge>
+    )
+  const cls =
+    level === "medium"
+      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+      : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30"
+  return <Badge className={`text-[10px] px-1 py-0 ${cls}`}>{level}</Badge>
+}
+
 function ClientRow({
   candidate,
   checked,
@@ -566,11 +586,17 @@ function ClientRow({
         onCheckedChange={(v) => onToggle(v === true)}
       />
       <div className="flex-1 min-w-0 space-y-0.5">
-        <div className="text-sm font-medium truncate">{candidate.displayName}</div>
+        <div className="text-sm font-medium truncate flex items-center gap-1.5">
+          <span className="truncate">{candidate.displayName}</span>
+          <ConfidenceBadge level={candidate.confidence} />
+        </div>
         <div className="text-xs text-muted-foreground truncate">
           mentioned in {candidate.occurrences} item
           {candidate.occurrences === 1 ? "" : "s"}
           {candidate.inferredWebUrl ? ` · ${candidate.inferredWebUrl}` : ""}
+          {candidate.aliases.length > 0
+            ? ` · aka ${candidate.aliases.join(", ")}`
+            : ""}
         </div>
         {candidate.possibleDuplicate && (
           <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
@@ -612,11 +638,14 @@ function ContactRow({
           placeholder="(unknown)"
           className="h-8 text-sm font-medium"
         />
-        <div className="text-xs text-muted-foreground truncate">
-          {candidate.email}
-          {candidate.nativeName ? ` · ${candidate.nativeName}` : ""} · mentioned
-          in {candidate.occurrences} item
-          {candidate.occurrences === 1 ? "" : "s"}
+        <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
+          <ConfidenceBadge level={candidate.confidence} />
+          <span className="truncate">
+            {candidate.email}
+            {candidate.nativeName ? ` · ${candidate.nativeName}` : ""} ·
+            mentioned in {candidate.occurrences} item
+            {candidate.occurrences === 1 ? "" : "s"}
+          </span>
         </div>
         {candidate.possibleDuplicate && (
           <Badge className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
@@ -672,9 +701,10 @@ function LinkRow({
               ambiguous
             </Badge>
           )}
+          <ConfidenceBadge level={proposal.confidence} />
         </div>
         <div className="text-xs text-muted-foreground truncate">
-          matched on {proposal.matchedDomain}
+          matched on {proposal.matchedLabel}
         </div>
       </div>
     </div>

@@ -48,6 +48,7 @@ export class ClientContentScopeError extends Error {
 export type ClientDetail = {
   id: string
   name: string
+  aliases: string[] | null
   phone: string | null
   email: string | null
   address: string | null
@@ -75,6 +76,7 @@ export async function getClientDetail(
     .select({
       id: client.id,
       name: client.name,
+      aliases: client.aliases,
       phone: client.phone,
       email: client.email,
       address: client.address,
@@ -129,6 +131,7 @@ export async function getClientDetail(
   return {
     id: row.id,
     name: row.name,
+    aliases: row.aliases,
     phone: row.phone,
     email: row.email,
     address: row.address,
@@ -144,6 +147,7 @@ export async function getClientDetail(
       id: c.id,
       name: c.name,
       nameNative: c.nameNative,
+      aliases: c.aliases,
       phone: c.phone,
       email: c.email,
       position: c.position,

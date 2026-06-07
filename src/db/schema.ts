@@ -235,6 +235,12 @@ export const client = pgTable(
     email: text("email"),
     address: text("address"),
     webUrl: text("web_url"),
+    // Alternate spellings / synonyms for this company seen across sources
+    // (cross-script + with/without legal form, e.g. ["AST", "АСТ", "AST
+    // INTER"]). Used by discovery to dedup a known client against new
+    // candidates and to attribute contacts by company. Nullable; populated by
+    // discovery + the edit form. Matched via `companyMatchKey`.
+    aliases: text("aliases").array(),
     funnelPhase: funnelPhase("funnel_phase").notNull().default("awareness"),
     status: entityStatus("status").notNull().default("active"),
     userId: text("user_id")
@@ -270,6 +276,11 @@ export const contact = pgTable(
     // a body name to this contact's envelope email. See
     // `metadata_json.participantNativeNames` + `applyDiscovery`.
     nameNative: text("name_native"),
+    // Alternate name spellings / order variants / nicknames seen across
+    // sources (e.g. ["Богданов Евгений", "Евгений Богданов", "Женя"]). Used
+    // for search + dedup. Nullable; populated by discovery + the edit form.
+    // Matched via `personMatchKey`.
+    aliases: text("aliases").array(),
     phone: text("phone"),
     email: text("email"),
     position: text("position"),

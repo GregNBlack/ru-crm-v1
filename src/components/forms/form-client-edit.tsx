@@ -51,6 +51,8 @@ const STATUSES: EntityStatus[] = ["active", "suspended", "initial", "deleted"]
 
 type ClientFormData = {
   name: string
+  /** Comma-separated in the form; split to string[] on submit. */
+  aliases: string
   phone: string
   email: string
   address: string
@@ -105,6 +107,7 @@ export default function ClientEditDialog({
   const form = useForm<ClientFormData>({
     defaultValues: {
       name: client?.name ?? "",
+      aliases: (client?.aliases ?? []).join(", "),
       phone: client?.phone ?? "",
       email: client?.email ?? "",
       address: client?.address ?? "",
@@ -131,10 +134,14 @@ export default function ClientEditDialog({
   const onSubmit = (data: ClientFormData) => {
     startTransition(async () => {
       try {
+        const aliases = data.aliases
+          .split(",")
+          .map((a) => a.trim())
+          .filter(Boolean)
         const payload =
           mode === "create"
-            ? data
-            : { id: client!.id, ...data }
+            ? { ...data, aliases }
+            : { id: client!.id, ...data, aliases }
         const res = await fetch("/api/clients", {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -236,6 +243,23 @@ export default function ClientEditDialog({
                   <FormLabel className="text-gray-400">Website</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder="https://example.com" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="aliases"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-400">Also known as</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="Other spellings, comma-separated (e.g. AST, АСТ, AST INTER)"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

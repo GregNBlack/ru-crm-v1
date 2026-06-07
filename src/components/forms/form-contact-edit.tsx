@@ -45,6 +45,8 @@ const NO_CLIENT = "__none__"
 type ContactFormData = {
   name: string
   nameNative: string
+  /** Comma-separated in the form; split to string[] on submit. */
+  aliases: string
   phone: string
   email: string
   position: string
@@ -73,6 +75,7 @@ export default function ContactEditDialog({
     defaultValues: {
       name: contact?.name ?? "",
       nameNative: contact?.nameNative ?? "",
+      aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
@@ -86,6 +89,7 @@ export default function ContactEditDialog({
     form.reset({
       name: contact?.name ?? "",
       nameNative: contact?.nameNative ?? "",
+      aliases: (contact?.aliases ?? []).join(", "),
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
@@ -109,10 +113,14 @@ export default function ContactEditDialog({
     startTransition(async () => {
       try {
         const clientId = data.clientId === NO_CLIENT ? null : data.clientId
+        const aliases = data.aliases
+          .split(",")
+          .map((a) => a.trim())
+          .filter(Boolean)
         const payload =
           mode === "create"
-            ? { ...data, clientId }
-            : { id: contact!.id, ...data, clientId }
+            ? { ...data, aliases, clientId }
+            : { id: contact!.id, ...data, aliases, clientId }
         const res = await fetch("/api/contacts", {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -220,6 +228,25 @@ export default function ContactEditDialog({
                   <FormLabel className="text-gray-400">Position</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder="e.g. CTO" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="aliases"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-400">
+                    Also known as
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="Other spellings / nicknames, comma-separated (e.g. Евгений Богданов, Женя)"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

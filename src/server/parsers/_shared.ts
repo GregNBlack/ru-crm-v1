@@ -42,7 +42,44 @@ export type MetadataAnalysis = {
   // `contact.name_native` + `contact.phone` + `contact.position`.
   // See filterParticipantDetails.
   participantDetails?: ParticipantDetail[]
+  // Enriched view of the companies in this item: canonical name + alternate
+  // spellings (cross-script / with-or-without legal form) + website when the
+  // body/signature reveals it. Optional — parsers that can extract it populate
+  // it; others omit the key (discovery falls back to the flat `companies`
+  // list). Drives client dedup-by-alias, web-URL attribution and contact↔
+  // client linking in discovery. See filterOrganizations.
+  organizations?: OrganizationDetail[]
 }
+
+// An organization the LLM identified in a source item, enriched beyond the
+// flat `companies` string. `name` is the best display form; `aliases` are
+// other spellings of the SAME company seen in the item (e.g. the Cyrillic
+// form, the form without the legal suffix, a domain-derived brand); `webUrl`
+// is the company's website when the body/signature makes it determinable
+// (often the sender's own email domain), else empty.
+export type OrganizationDetail = {
+  name: string
+  aliases: string[]
+  webUrl: string
+}
+
+export const organizationDetailSchema = z.object({
+  name: z
+    .string()
+    .describe(
+      "Best display name of the company (prefer the fullest, most official form actually present in the text).",
+    ),
+  aliases: z
+    .array(z.string())
+    .describe(
+      "Other spellings of the SAME company seen in this item: the other-script form (e.g. the Cyrillic vs Latin variant), the form with/without the legal entity type (ООО/LLC/GmbH), an abbreviation, or a brand derived from the email domain. Do NOT include unrelated companies. Empty array if there is only one spelling.",
+    ),
+  webUrl: z
+    .string()
+    .describe(
+      "The company's website if it is determinable from the body — e.g. a URL in the signature, or the sender's own email domain when the sender clearly belongs to this company (alice@ast-inter.ru, signing for АСТ → 'https://ast-inter.ru'). Empty string when you cannot tell. Never fabricate.",
+    ),
+})
 
 // A third party referenced inside the body of a source item (not the
 // author/sender, not an envelope recipient — those are captured by the
@@ -228,6 +265,42 @@ export function filterParticipantDetails(
     phone: d.phone,
     position: d.position,
   }))
+}
+
+// Reusable system-prompt clause for enriched organization extraction.
+// Appended after the flat-companies instruction. Asks the model to also emit
+// one structured entry PER DISTINCT real-world company, folding spelling
+// variants together rather than listing them as separate companies.
+export const ORGANIZATIONS_PROMPT = `Also emit \`organizations\`: one entry per DISTINCT real-world company referenced in the message, with {name, aliases, webUrl}. This is the structured counterpart to the flat \`companies\` list — fold spelling variants of the SAME company into ONE entry (its other-script form, the form with/without legal type like ООО/LLC/GmbH, an abbreviation, or a brand visible in the email domain) and put the secondary spellings in \`aliases\`. Set \`webUrl\` from the signature, or from the sender's own email domain when the sender clearly belongs to that company (e.g. someone signing for "АСТ" from alice@ast-inter.ru → "https://ast-inter.ru"). Leave \`webUrl\` empty when you can't tell. Never fabricate a URL or an alias.`
+
+// v1 persist filter for organizations: drop entries with no usable name,
+// dedup aliases (case-insensitive, excluding the name itself), trim the
+// webUrl. Keeps the shape small and clean for metadata_json.
+export function filterOrganizations(
+  raw: OrganizationDetail[],
+): OrganizationDetail[] {
+  const out: OrganizationDetail[] = []
+  const seenNames = new Set<string>()
+  for (const o of raw ?? []) {
+    if (!o) continue
+    const name = (o.name ?? "").trim()
+    if (!name) continue
+    const nameLower = name.toLowerCase()
+    if (seenNames.has(nameLower)) continue
+    seenNames.add(nameLower)
+    const aliasSeen = new Set<string>([nameLower])
+    const aliases: string[] = []
+    for (const a of o.aliases ?? []) {
+      const t = (typeof a === "string" ? a : "").trim()
+      if (!t) continue
+      const lower = t.toLowerCase()
+      if (aliasSeen.has(lower)) continue
+      aliasSeen.add(lower)
+      aliases.push(t)
+    }
+    out.push({ name, aliases, webUrl: (o.webUrl ?? "").trim() })
+  }
+  return out
 }
 
 // Shape of the YAML frontmatter defined in refs/parsing-sources-template.md.
