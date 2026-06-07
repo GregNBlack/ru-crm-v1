@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
       selectedLinks: body.selectedLinks,
       scannedRowIds: body.scannedRowIds,
       candidates: body.candidates,
+      clientEnrichments: body.clientEnrichments ?? [],
       nativeNames: body.nativeNames ?? [],
       phones: body.phones ?? [],
       positions: body.positions ?? [],
