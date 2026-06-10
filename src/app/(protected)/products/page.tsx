@@ -31,7 +31,8 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
-import { ExternalLink, ImageOff, Loader, X } from "lucide-react"
+import { ProductDetailDialog } from "@/components/blocks/product-detail-dialog"
+import { ExternalLink, Eye, ImageOff, Loader, X } from "lucide-react"
 import type { ProductRow, ListProductsResult } from "@/app/api/products/route"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
@@ -186,19 +187,20 @@ export default function ProductsPage() {
                     <TableHead className="text-right w-28">Price</TableHead>
                     <TableHead className="text-right w-24">Stock</TableHead>
                     <TableHead className="w-20 text-center">Page</TableHead>
+                    <TableHead className="w-20 text-center">Info</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="h-40 text-center">
+                      <TableCell colSpan={7} className="h-40 text-center">
                         <Loader className="animate-spin h-6 w-6 mx-auto" />
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={6}
+                        colSpan={7}
                         className="h-40 text-center text-muted-foreground"
                       >
                         {query
@@ -267,6 +269,20 @@ export default function ProductsPage() {
                           ) : (
                             "—"
                           )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <ProductDetailDialog
+                            productId={p.id}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Full info for ${p.name}`}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
                         </TableCell>
                       </TableRow>
                     ))
