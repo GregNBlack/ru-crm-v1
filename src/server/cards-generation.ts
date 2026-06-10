@@ -18,6 +18,8 @@ import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "dr
 import { getServerSession } from "@/lib/get-session"
 import { getMarkdownFromR2 } from "@/lib/r2"
 import { getGatewayId } from "@/lib/llm-models"
+import { loadOwnOrgIdentity, type OwnOrgIdentity } from "@/server/org-identity"
+import { extractEmailDomain } from "@/lib/email-domain"
 import { generateText, Output } from "ai"
 import { z } from "zod"
 import { randomUUID } from "crypto"
@@ -96,6 +98,92 @@ function normaliseCategory(c: string): CardCategory {
 
 function normaliseName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ")
+}
+
+// --- Conversation grouping -------------------------------------------------
+// Provider thread ids (Gmail threadId / Chat thread) are the precise signal,
+// but real CRM inboxes routinely break a logical conversation across several
+// provider threads (a "Re:" composed as a fresh email gets a brand-new
+// threadId). So a card's "history" is keyed primarily on the EXTERNAL
+// contact (the non-own-domain participant) and secondarily on the provider
+// thread — either shared key links two messages into one conversation.
+
+// How far back to look for prior messages of the same conversation.
+const HISTORY_LOOKBACK_DAYS = 180
+// Cap prior messages fed as context per card (most-recent first), and clip
+// each summary so a long history can't blow the context budget.
+const MAX_HISTORY_MESSAGES = 12
+const MAX_HISTORY_SUMMARY_CHARS = 600
+
+type EmailParty = { name?: string | null; email?: string | null }
+
+function partyEmails(meta: Record<string, unknown>): EmailParty[] {
+  const out: EmailParty[] = []
+  for (const key of ["from", "to", "cc", "bcc"]) {
+    const v = meta[key]
+    if (Array.isArray(v)) {
+      for (const p of v) {
+        if (p && typeof p === "object" && "email" in p) {
+          out.push(p as EmailParty)
+        }
+      }
+    }
+  }
+  // Fallback for providers that store participants instead of from/to.
+  const participants = meta["participants"]
+  if (Array.isArray(participants)) {
+    for (const p of participants) {
+      if (p && typeof p === "object" && "email" in p) out.push(p as EmailParty)
+    }
+  }
+  return out
+}
+
+// Keys under which an item participates in a conversation. Two items belong
+// to the same conversation if they share ANY key.
+function conversationKeys(
+  threadExternalId: string | null,
+  meta: Record<string, unknown>,
+  ownOrg: OwnOrgIdentity,
+): string[] {
+  const keys: string[] = []
+  if (threadExternalId) keys.push(`thread:${threadExternalId}`)
+  for (const p of partyEmails(meta)) {
+    const email = (p.email ?? "").trim().toLowerCase()
+    if (!email) continue
+    // Only EXTERNAL parties anchor a conversation — the owner's own mailbox is
+    // on (almost) every message and would merge unrelated threads.
+    if (ownOrg.isOwnDomain(extractEmailDomain(email))) continue
+    keys.push(`contact:${email}`)
+  }
+  return Array.from(new Set(keys))
+}
+
+type HistoryEntry = {
+  id: string
+  sourceCreatedAt: Date | null
+  subject: string
+  sender: string
+  summary: string
+}
+
+function metaSubject(meta: Record<string, unknown>): string {
+  const s = meta["subject"]
+  return typeof s === "string" ? s : ""
+}
+
+function metaSenderLabel(meta: Record<string, unknown>): string {
+  const from = meta["from"]
+  if (Array.isArray(from) && from[0] && typeof from[0] === "object") {
+    const p = from[0] as EmailParty
+    return p.name?.trim() || p.email?.trim() || "unknown"
+  }
+  return "unknown"
+}
+
+function metaSummary(meta: Record<string, unknown>): string {
+  const s = meta["summary"]
+  return typeof s === "string" ? s : ""
 }
 
 export type GenerateCardsInput = {
@@ -263,6 +351,8 @@ export async function generateCards(
       externalId: sourceItem.externalId,
       provider: source.provider,
       sourceCreatedAt: sourceItem.sourceCreatedAt,
+      threadExternalId: sourceItem.threadExternalId,
+      metadataJson: sourceItem.metadataJson,
     })
     .from(sourceItem)
     .innerJoin(source, eq(sourceItem.sourceId, source.id))
@@ -290,6 +380,94 @@ export async function generateCards(
 
   const clientList = orgClients.map((c) => c.name).join("\n- ")
   const userList = orgUsers.map((u) => u.name).join("\n- ")
+
+  // 4b. Conversation history index. Pull every parsed root item for the org
+  //     within the lookback window, key each by its conversation keys, so the
+  //     per-card loop can assemble the prior messages of the same conversation
+  //     as context (summaries only — cheap, no extra R2 reads).
+  const ownOrg = await loadOwnOrgIdentity(activeOrgId)
+  const historyCutoff = new Date(
+    Date.now() - HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  )
+  const historyRows = await db
+    .select({
+      id: sourceItem.id,
+      sourceCreatedAt: sourceItem.sourceCreatedAt,
+      threadExternalId: sourceItem.threadExternalId,
+      metadataJson: sourceItem.metadataJson,
+    })
+    .from(sourceItem)
+    .where(
+      and(
+        eq(sourceItem.organizationId, activeOrgId),
+        eq(sourceItem.parseStatus, "complete"),
+        isNull(sourceItem.parentSourceItemId),
+        gte(sourceItem.sourceCreatedAt, historyCutoff),
+      ),
+    )
+
+  // key -> entries (unsorted; sorted + filtered per card at use time).
+  const historyIndex = new Map<string, HistoryEntry[]>()
+  for (const row of historyRows) {
+    const meta = (row.metadataJson ?? {}) as Record<string, unknown>
+    const subject = metaSubject(meta)
+    // Items without a subject (attachments slipped through, non-email kinds)
+    // carry no useful conversational summary line — skip them as history.
+    if (!subject && !metaSummary(meta)) continue
+    const entry: HistoryEntry = {
+      id: row.id,
+      sourceCreatedAt: row.sourceCreatedAt,
+      subject,
+      sender: metaSenderLabel(meta),
+      summary: metaSummary(meta),
+    }
+    for (const key of conversationKeys(row.threadExternalId, meta, ownOrg)) {
+      const list = historyIndex.get(key)
+      if (list) list.push(entry)
+      else historyIndex.set(key, [entry])
+    }
+  }
+
+  // Assemble the prior-conversation block for one candidate. Returns the
+  // rendered markdown (empty when there's no prior history) + a count.
+  function buildHistoryForItem(item: {
+    id: string
+    sourceCreatedAt: Date | null
+    threadExternalId: string | null
+    metadataJson: unknown
+  }): { historyMarkdown: string; priorCount: number } {
+    const meta = (item.metadataJson ?? {}) as Record<string, unknown>
+    const keys = conversationKeys(item.threadExternalId, meta, ownOrg)
+    const byId = new Map<string, HistoryEntry>()
+    for (const key of keys) {
+      for (const e of historyIndex.get(key) ?? []) {
+        if (e.id === item.id) continue
+        // Strictly prior in time. Ties (same timestamp) are treated as not
+        // prior to avoid a message pairing with its own resync duplicate.
+        const a = e.sourceCreatedAt?.getTime() ?? 0
+        const b = item.sourceCreatedAt?.getTime() ?? 0
+        if (a >= b) continue
+        byId.set(e.id, e)
+      }
+    }
+    if (byId.size === 0) return { historyMarkdown: "", priorCount: 0 }
+    const sorted = Array.from(byId.values()).sort(
+      (x, y) =>
+        (x.sourceCreatedAt?.getTime() ?? 0) -
+        (y.sourceCreatedAt?.getTime() ?? 0),
+    )
+    // Keep the most-recent MAX_HISTORY_MESSAGES, then render oldest→newest.
+    const kept = sorted.slice(-MAX_HISTORY_MESSAGES)
+    const lines = kept.map((e) => {
+      const when = e.sourceCreatedAt?.toISOString().slice(0, 16) ?? "unknown"
+      const summary =
+        e.summary.length > MAX_HISTORY_SUMMARY_CHARS
+          ? e.summary.slice(0, MAX_HISTORY_SUMMARY_CHARS) + "…"
+          : e.summary || "(no summary)"
+      return `- [${when}] from ${e.sender} · subject: "${e.subject || "(none)"}"\n  ${summary}`
+    })
+    return { historyMarkdown: lines.join("\n"), priorCount: kept.length }
+  }
 
   const gatewayId = getGatewayId(input.modelKey)
 
@@ -342,6 +520,8 @@ export async function generateCards(
         ? markdown.slice(0, MAX_MARKDOWN_CHARS) + "\n\n[…truncated]"
         : markdown
 
+    const { historyMarkdown, priorCount } = buildHistoryForItem(item)
+
     const prompt = buildPrompt({
       ruleContent: ruleRow.content,
       clientList,
@@ -350,6 +530,8 @@ export async function generateCards(
       title: item.filename ?? item.externalId,
       sourceCreatedAt: item.sourceCreatedAt?.toISOString() ?? "unknown",
       markdown: truncated,
+      historyMarkdown,
+      priorCount,
     })
 
     try {
@@ -461,7 +643,24 @@ function buildPrompt(args: {
   title: string
   sourceCreatedAt: string
   markdown: string
+  historyMarkdown: string
+  priorCount: number
 }): string {
+  const isFollowUp = args.priorCount > 0
+  const historySection = isFollowUp
+    ? `# CONVERSATION HISTORY (context only — do NOT re-summarize)
+This is a FOLLOW-UP message. ${args.priorCount} earlier message(s) of the same
+conversation are listed below, oldest → newest, as short summaries. Use them
+ONLY to interpret what the LATEST message changes. Do not repeat their content
+in the card unless it is needed to explain why the latest signal matters.
+
+${args.historyMarkdown}
+`
+    : `# CONVERSATION HISTORY
+None — this is the FIRST message we have in this conversation. Analyze it as an
+initial inbound signal.
+`
+
   return `# RULE
 ${args.ruleContent}
 
@@ -494,10 +693,12 @@ Rules:
   Those placeholders are ignored on the server when relevant=false.
 - Never return null, never omit a field.
 
-# SOURCE ITEM
+${historySection}
+# LATEST MESSAGE (analyze THIS — emit the card about what it changes)
 - Provider: ${args.provider}
 - Title: ${args.title}
 - Source created: ${args.sourceCreatedAt}
+- Is follow-up: ${isFollowUp ? `yes (${args.priorCount} prior message(s))` : "no (first message)"}
 
 ## Markdown
 ${args.markdown}
