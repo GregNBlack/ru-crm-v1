@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Loader,
   PackageCheck,
+  Plus,
   SkipForward,
   Sparkles,
   X,
@@ -33,19 +34,25 @@ import type { OrderClientOption } from "@/app/api/orders/route"
 import type { OrderRequestItemView } from "@/app/api/order-requests/route"
 import { hasAnyFilter } from "@/lib/order-request"
 
-// ── "New order from request" dialog ──────────────────────────────────
-// Same client + comment inputs as "New order", plus the pasted free-text
-// client message. Submitting creates the order_request and runs the LLM
-// split (can take a few seconds), then hands the request id to the page to
-// start the assembly wizard.
-export function NewOrderFromRequestDialog({
+// ── Unified "New order" dialog ───────────────────────────────────────
+// One entry point for both flows. Collects client + description, plus an
+// OPTIONAL free-text client request. The request field is the switch:
+//   • empty  → manual build: open the order builder with the client +
+//              description preset (`onManual`).
+//   • filled → AI assist: create the order_request, run the LLM split, and
+//              hand the request id to the assembly wizard (`onAssemble`).
+// Client is optional for the manual path (can be picked later in the builder)
+// but required for the AI path (the parse needs a client).
+export function NewOrderDialog({
   open,
   onOpenChange,
-  onCreated,
+  onManual,
+  onAssemble,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreated: (requestId: string) => void
+  onManual: (opts: { clientId: string | null; description: string }) => void
+  onAssemble: (requestId: string) => void
 }) {
   const [clientOptions, setClientOptions] = useState<OrderClientOption[]>([])
   const [clientId, setClientId] = useState<string>("")
@@ -71,13 +78,19 @@ export function NewOrderFromRequestDialog({
     setRawText("")
   }
 
+  const hasRequest = rawText.trim().length > 0
+
   const submit = async () => {
-    if (!clientId) {
-      toast.error("Select a client first")
+    // Manual path — no request text. Client optional (picked later if blank).
+    if (!hasRequest) {
+      onManual({ clientId: clientId || null, description: comment })
+      reset()
+      onOpenChange(false)
       return
     }
-    if (!rawText.trim()) {
-      toast.error("Paste the client's request first")
+    // AI path — needs a client to attribute the parsed order.
+    if (!clientId) {
+      toast.error("Select a client to analyse the request")
       return
     }
     setSubmitting(true)
@@ -92,7 +105,7 @@ export function NewOrderFromRequestDialog({
         toast.error(data.error || "Failed to analyse the request")
         return
       }
-      onCreated(data.id as string)
+      onAssemble(data.id as string)
       reset()
       onOpenChange(false)
     } catch {
@@ -106,19 +119,19 @@ export function NewOrderFromRequestDialog({
     <Dialog open={open} onOpenChange={(o) => !submitting && onOpenChange(o)}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New order from request</DialogTitle>
+          <DialogTitle>New order</DialogTitle>
           <DialogDescription>
-            Paste the client&rsquo;s free-text message. We&rsquo;ll split it into
-            product requests and walk you through assembling the order.
+            Build manually, or paste a client&rsquo;s free-text message below to
+            have it split into product requests and walk you through the order.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="space-y-1">
-            <span className="text-xs text-muted-foreground">Client *</span>
+            <span className="text-xs text-muted-foreground">Client</span>
             <Select value={clientId} onValueChange={setClientId} disabled={submitting}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select a client" />
+                <SelectValue placeholder="Select a client (optional for manual)" />
               </SelectTrigger>
               <SelectContent>
                 {clientOptions.map((c) => (
@@ -131,7 +144,7 @@ export function NewOrderFromRequestDialog({
           </div>
 
           <div className="space-y-1">
-            <span className="text-xs text-muted-foreground">Comment</span>
+            <span className="text-xs text-muted-foreground">Description</span>
             <Textarea
               rows={1}
               className="min-h-9"
@@ -144,11 +157,14 @@ export function NewOrderFromRequestDialog({
 
           <div className="space-y-1">
             <span className="text-xs text-muted-foreground">
-              Client request *
+              Client request{" "}
+              <span className="text-muted-foreground/70">
+                — leave empty to build manually
+              </span>
             </span>
             <Textarea
-              rows={8}
-              placeholder="Paste the WhatsApp / email / chat message here…"
+              rows={7}
+              placeholder="Paste the WhatsApp / email / chat message here to auto-assemble the order…"
               value={rawText}
               onChange={(e) => setRawText(e.target.value)}
               disabled={submitting}
@@ -170,10 +186,15 @@ export function NewOrderFromRequestDialog({
                 <Loader className="h-4 w-4 mr-1 animate-spin" />
                 Analysing the request…
               </>
-            ) : (
+            ) : hasRequest ? (
               <>
                 <Sparkles className="h-4 w-4 mr-1" />
                 Analyse &amp; start
+              </>
+            ) : (
+              <>
+                <Plus className="h-4 w-4 mr-1" />
+                Build order
               </>
             )}
           </Button>

@@ -136,6 +136,21 @@ const TERM_MATCH_KEYS = [
 // that would match half the catalog.
 const MIN_TERM_LEN = 2
 
+// Field weights for ranked term search — a hit in the product NAME is a far
+// stronger signal of the right product than a hit in a generic attribute, so
+// the brand word living in the name dominates a category/country match.
+const FIELD_W = { name: 3, category: 2, accounting: 2, attr: 1 } as const
+
+// Per-term distinctiveness weight: rare/long/numeric tokens (brand words,
+// proof/age numbers like "135") discriminate far better than short common
+// kind-words ("Gin", "Dry", "Вино"), so they should dominate the score.
+function termWeight(t: string): number {
+  if (/^\d+$/.test(t)) return 2.5
+  if (t.length >= 6) return 1.8
+  if (t.length >= 4) return 1.3
+  return 0.8
+}
+
 export type ListProductsResult = {
   rows: ProductRow[]
   total: number
@@ -177,9 +192,12 @@ export async function listProducts(
   const awards = params.awards?.trim()
 
   // Bilingual ranked search: dedupe terms (case-insensitive), drop too-short
-  // ones, cap the count, and build a per-term hit score over the name +
-  // identity attributes. Products with zero hits are excluded; ordering is by
-  // hit count desc so the best multi-token matches surface first.
+  // ones, cap the count, and build a WEIGHTED relevance score. Per term, the
+  // best field hit (name > category/accounting > attribute, via GREATEST so a
+  // term counts once) is scaled by the term's distinctiveness weight — so a
+  // rare brand word in the name dominates a common kind-word in an attribute.
+  // Products with zero hits are excluded; ordering is by score desc, then the
+  // shorter name (tighter match) as a coverage tie-break.
   const uniqueTerms = [
     ...new Map(
       (params.terms ?? [])
@@ -190,18 +208,25 @@ export async function listProducts(
   ].slice(0, 16)
   const hasTerms = uniqueTerms.length > 0
 
-  const termMatch = (t: string) => {
+  const termScore = (t: string) => {
     const like = `%${t}%`
-    return sql`(${product.name} ILIKE ${like} OR ${product.category} ILIKE ${like} OR ${product.accountingMetadata}::text ILIKE ${like} OR ${sql.join(
-      TERM_MATCH_KEYS.map(
-        (k) => sql`${product.additionalMetadata} ->> ${k} ILIKE ${like}`,
-      ),
-      sql` OR `,
-    )})`
+    const w = termWeight(t)
+    return sql`${w} * GREATEST(
+      CASE WHEN ${product.name} ILIKE ${like} THEN ${FIELD_W.name} ELSE 0 END,
+      CASE WHEN ${product.category} ILIKE ${like} THEN ${FIELD_W.category} ELSE 0 END,
+      CASE WHEN ${product.accountingMetadata}::text ILIKE ${like} THEN ${FIELD_W.accounting} ELSE 0 END,
+      ${sql.join(
+        TERM_MATCH_KEYS.map(
+          (k) =>
+            sql`CASE WHEN ${product.additionalMetadata} ->> ${k} ILIKE ${like} THEN ${FIELD_W.attr} ELSE 0 END`,
+        ),
+        sql`, `,
+      )}
+    )`
   }
   const scoreExpr = hasTerms
     ? sql<number>`(${sql.join(
-        uniqueTerms.map((t) => sql`CASE WHEN ${termMatch(t)} THEN 1 ELSE 0 END`),
+        uniqueTerms.map((t) => termScore(t)),
         sql` + `,
       )})`
     : null
@@ -267,7 +292,9 @@ export async function listProducts(
       .from(product)
       .where(where)
       .orderBy(
-        ...(scoreExpr ? [sql`${scoreExpr} DESC`] : []),
+        ...(scoreExpr
+          ? [sql`${scoreExpr} DESC`, sql`char_length(${product.name}) ASC`]
+          : []),
         asc(product.name),
       )
       .limit(limit)

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -66,12 +67,16 @@ export type DraftLine = {
   productName: string
   unitPrice: number
   quantity: number
+  // Current catalog stock (null = unknown). Drives the "only products in
+  // stock" guard; null is treated as unconstrained.
+  stock: number | null
 }
 
 export type AddableProduct = {
   id: string
   name: string
   price: number | null
+  stock?: number | null
 }
 
 export type OrderBuilder = ReturnType<typeof useOrderBuilder>
@@ -94,6 +99,9 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
   const [link, setLink] = useState<OrderLinkMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  // When on, products without enough catalog stock can't be added and line
+  // quantities are capped at available stock. Per-session UI guard (not saved).
+  const [stockOnly, setStockOnly] = useState(false)
 
   const [clientOptions, setClientOptions] = useState<OrderClientOption[]>([])
   const clientsLoaded = useRef(false)
@@ -120,6 +128,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     setCurrency("RUB")
     setLines([])
     setLink(null)
+    setStockOnly(false)
   }, [])
 
   const openNew = useCallback(() => {
@@ -143,6 +152,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
         productName: i.productName ?? i.productId,
         unitPrice: i.unitPrice,
         quantity: i.quantity,
+        stock: i.productStock,
       })),
     )
   }, [])
@@ -201,31 +211,66 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     [clientOptions],
   )
 
-  const addProduct = useCallback((p: AddableProduct, qty: number) => {
-    const quantity = Math.max(1, Math.trunc(qty) || 1)
-    setLines((prev) => {
-      const i = prev.findIndex((l) => l.productId === p.id)
-      if (i >= 0) {
-        const next = [...prev]
-        next[i] = { ...next[i], quantity: next[i].quantity + quantity }
-        return next
+  const addProduct = useCallback(
+    (p: AddableProduct, qty: number) => {
+      const quantity = Math.max(1, Math.trunc(qty) || 1)
+      const stock = p.stock ?? null
+      // "Only products in stock" guard: block products with no stock and adds
+      // that would push the line over available stock.
+      if (stockOnly) {
+        if (stock === null || stock <= 0) {
+          toast.error(`${p.name} is out of stock`)
+          return
+        }
+        const existing =
+          lines.find((l) => l.productId === p.id)?.quantity ?? 0
+        if (existing + quantity > stock) {
+          toast.error(
+            `Only ${stock} of ${p.name} in stock${existing ? ` (${existing} already on the order)` : ""}`,
+          )
+          return
+        }
       }
-      return [
-        ...prev,
-        { productId: p.id, productName: p.name, unitPrice: p.price ?? 0, quantity },
-      ]
-    })
-  }, [])
+      setLines((prev) => {
+        const i = prev.findIndex((l) => l.productId === p.id)
+        if (i >= 0) {
+          const next = [...prev]
+          next[i] = { ...next[i], quantity: next[i].quantity + quantity, stock }
+          return next
+        }
+        return [
+          ...prev,
+          {
+            productId: p.id,
+            productName: p.name,
+            unitPrice: p.price ?? 0,
+            quantity,
+            stock,
+          },
+        ]
+      })
+    },
+    [stockOnly, lines],
+  )
 
-  const setQuantity = useCallback((productId: string, qty: number) => {
-    setLines((prev) =>
-      prev.map((l) =>
-        l.productId === productId
-          ? { ...l, quantity: Math.max(1, Math.trunc(qty) || 1) }
-          : l,
-      ),
-    )
-  }, [])
+  const setQuantity = useCallback(
+    (productId: string, qty: number) => {
+      setLines((prev) =>
+        prev.map((l) => {
+          if (l.productId !== productId) return l
+          let q = Math.max(1, Math.trunc(qty) || 1)
+          // Cap at available stock when the guard is on (null stock = unknown,
+          // left unconstrained).
+          if (stockOnly && l.stock !== null && q > l.stock) {
+            q = Math.max(1, l.stock)
+            toast.error(`Only ${l.stock} of ${l.productName} in stock`)
+          }
+          return { ...l, quantity: q }
+        }),
+      )
+    },
+    [stockOnly],
+  )
 
   const setUnitPrice = useCallback((productId: string, price: number) => {
     setLines((prev) =>
@@ -303,6 +348,16 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     }
   }, [persist, close, onSaved])
 
+  // Save content edits on a confirmed order without leaving the panel (so the
+  // user can keep adjusting, then finalize). Re-hydrates from the server.
+  const saveChanges = useCallback(async () => {
+    const id = await persist()
+    if (id) {
+      toast.success("Changes saved")
+      await reload()
+    }
+  }, [persist, reload])
+
   // Status transition via the link endpoint (mint/revoke lifecycle).
   const linkAction = useCallback(
     async (action: "pullback" | "cancel" | "finalize") => {
@@ -351,15 +406,18 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     }
   }, [mode, orderId, linkAction, close, onSaved])
 
-  // confirmed → finalized (internal terminal state). For now a pure status
-  // change — accounting hand-off is a later step.
+  // confirmed → finalized (internal terminal state). Persists any pending
+  // content edits first so the finalized order reflects the user's last
+  // adjustments. For now a pure status change — accounting hand-off is later.
   const finalizeOrder = useCallback(async () => {
+    const id = await persist()
+    if (!id) return
     if (await linkAction("finalize")) {
       toast.success("Order finalized")
       close()
       onSaved?.()
     }
-  }, [linkAction, close, onSaved])
+  }, [persist, linkAction, close, onSaved])
 
   return {
     isActive,
@@ -377,6 +435,8 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     total,
     link,
     clientOptions,
+    stockOnly,
+    setStockOnly,
     openNew,
     openEdit,
     reload,
@@ -390,6 +450,7 @@ export function useOrderBuilder({ onSaved }: { onSaved?: () => void } = {}) {
     setUnitPrice,
     removeLine,
     saveDraft,
+    saveChanges,
     pullBackToDraft,
     cancelOrder,
     finalizeOrder,
@@ -635,19 +696,22 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
     total,
     link,
     clientOptions,
+    stockOnly,
   } = builder
 
   const title =
     mode === "create" ? "New order" : readOnly ? "Order" : "Edit order"
 
-  // Save the draft (to get/keep an id), then open the send dialog.
+  // Save (to get/keep an id), then open the send dialog. Persist first whenever
+  // the panel is editable (draft → send; confirmed → reopen) so the client
+  // receives the latest content; a read-only reopen (finalized) skips persist.
   const beginSend = async (sendMode: SendMode) => {
     if (sendMode === "send" && lines.length === 0) {
       toast.error("Add at least one product first")
       return
     }
     let id = builder.orderId
-    if (sendMode === "send") {
+    if (!readOnly && (sendMode === "send" || sendMode === "reopen")) {
       id = await builder.persist()
     }
     if (!id) return
@@ -725,6 +789,17 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                   />
                 </div>
               </div>
+
+              {/* Order-formation guard: block out-of-stock adds. */}
+              {!readOnly && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer w-fit">
+                  <Checkbox
+                    checked={stockOnly}
+                    onCheckedChange={(v) => builder.setStockOnly(v === true)}
+                  />
+                  Allow only products in stock
+                </label>
+              )}
 
               {/* Line items. */}
               <div className="rounded-md border">
@@ -834,7 +909,7 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
 
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Draft (create or edit): full editing + send. */}
-                  {!readOnly && (
+                  {!readOnly && status !== "confirmed" && (
                     <>
                       <Button
                         variant="destructive"
@@ -861,6 +936,48 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                       >
                         <Send className="h-4 w-4 mr-1" />
                         Send to client
+                      </Button>
+                    </>
+                  )}
+
+                  {/* Confirmed: client returned it — editable before finalize.
+                      Save edits (stay open), send back, or finalize. */}
+                  {!readOnly && status === "confirmed" && (
+                    <>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={builder.cancelOrder}
+                        disabled={saving}
+                      >
+                        <Ban className="h-4 w-4 mr-1" />
+                        Cancel order
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => beginSend("reopen")}
+                        disabled={saving}
+                      >
+                        <Send className="h-4 w-4 mr-1" />
+                        Reopen to client
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={builder.saveChanges}
+                        disabled={saving}
+                      >
+                        <Save className="h-4 w-4 mr-1" />
+                        Save changes
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={builder.finalizeOrder}
+                        disabled={saving}
+                      >
+                        <PackageCheck className="h-4 w-4 mr-1" />
+                        Finalize the order
                       </Button>
                     </>
                   )}
@@ -897,34 +1014,23 @@ export function OrderBuilderPanel({ builder }: { builder: OrderBuilder }) {
                     </>
                   )}
 
-                  {/* Confirmed / finalized: reopen to client, finalize, close. */}
-                  {readOnly &&
-                    (status === "confirmed" || status === "finalized") && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => beginSend("reopen")}
-                          disabled={saving}
-                        >
-                          <Send className="h-4 w-4 mr-1" />
-                          Reopen to client
-                        </Button>
-                        {status === "confirmed" && (
-                          <Button
-                            size="sm"
-                            onClick={builder.finalizeOrder}
-                            disabled={saving}
-                          >
-                            <PackageCheck className="h-4 w-4 mr-1" />
-                            Finalize the order
-                          </Button>
-                        )}
-                        <Button variant="outline" size="sm" onClick={builder.close}>
-                          Close
-                        </Button>
-                      </>
-                    )}
+                  {/* Finalized: read-only — reopen to client or close. */}
+                  {readOnly && status === "finalized" && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => beginSend("reopen")}
+                        disabled={saving}
+                      >
+                        <Send className="h-4 w-4 mr-1" />
+                        Reopen to client
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={builder.close}>
+                        Close
+                      </Button>
+                    </>
+                  )}
 
                   {/* Cancelled: reopen as draft or close. */}
                   {readOnly && status === "cancelled" && (

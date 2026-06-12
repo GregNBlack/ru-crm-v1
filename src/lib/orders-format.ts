@@ -27,8 +27,12 @@ export const ORDER_STATUSES = Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]
 // until the user pulls it back to draft (which revokes the live link). Every
 // other status is a read-only preview. This is the ownership model from
 // `refs/spec-guest-order-link.md` (FR-10).
+// Internally editable statuses. `draft` (not yet sent) and `confirmed` (the
+// client reviewed + returned it, so the internal user owns it again and may
+// adjust line items before finalizing). `awaiting_client` belongs to the
+// client; `finalized` / `cancelled` are terminal.
 export function isOrderEditable(status: OrderStatus): boolean {
-  return status === "draft"
+  return status === "draft" || status === "confirmed"
 }
 
 // Structural email check (not RFC-exhaustive) — gates sending an order to a

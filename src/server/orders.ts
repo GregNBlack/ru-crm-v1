@@ -33,6 +33,9 @@ export type OrderItemRow = {
   id: string
   productId: string
   productName: string | null
+  // Current catalog stock for the line's product, so the builder's
+  // "only products in stock" guard works when editing an existing order.
+  productStock: number | null
   quantity: number
   unitPrice: number
   positionPrice: number
@@ -275,6 +278,7 @@ export async function getOrder(id: string): Promise<OrderDetail | null> {
         id: orderItem.id,
         productId: orderItem.productId,
         productName: product.name,
+        productStock: product.totalStock,
         quantity: orderItem.quantity,
         unitPrice: orderItem.unitPrice,
         positionPrice: orderItem.positionPrice,
@@ -306,6 +310,7 @@ export async function getOrder(id: string): Promise<OrderDetail | null> {
       id: r.id,
       productId: r.productId,
       productName: r.productName,
+      productStock: r.productStock,
       quantity: r.quantity,
       unitPrice: Number(r.unitPrice),
       positionPrice: Number(r.positionPrice),
@@ -383,12 +388,14 @@ export async function updateOrder(
   const { activeOrgId } = await requireOrgContext()
   const current = await assertOrderInOrg(orderId, activeOrgId)
 
-  // Content edits are only allowed while the order is a draft. Once it's been
-  // sent (awaiting_client) the CLIENT owns it; the internal user must pull it
-  // back to draft first. Status transitions go through `@/server/order-links`,
-  // never here. (Spec FR-10 / invariant #7.)
-  if (current.status !== "draft") {
-    throw new Error("Only draft orders can be edited")
+  // Content edits are allowed on a `draft` (not yet sent) and on a `confirmed`
+  // order (the client reviewed + returned it, so the internal user owns it
+  // again and may adjust line items before finalizing). While `awaiting_client`
+  // the CLIENT owns it (pull back to draft first); `finalized` / `cancelled`
+  // are terminal. Status transitions go through `@/server/order-links`, never
+  // here. (Spec FR-10 / invariant #7.)
+  if (current.status !== "draft" && current.status !== "confirmed") {
+    throw new Error("Only draft or confirmed orders can be edited")
   }
 
   if (data.clientId !== undefined) {

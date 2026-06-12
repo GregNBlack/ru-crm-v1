@@ -50,7 +50,7 @@ export const items = [
     icon: Users,
   },
   {
-    title: "Products",
+    title: "Orders",
     url: "/products",
     icon: Package,
   },

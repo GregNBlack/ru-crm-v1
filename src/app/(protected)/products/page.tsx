@@ -32,6 +32,7 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
 import { ProductDetailDialog } from "@/components/blocks/product-detail-dialog"
 import { OrdersTable } from "@/components/blocks/orders-table"
 import {
@@ -40,11 +41,11 @@ import {
   AddToOrderButton,
 } from "@/components/blocks/order-builder"
 import {
-  NewOrderFromRequestDialog,
+  NewOrderDialog,
   OrderRequestWizardStrip,
 } from "@/components/blocks/order-request-wizard"
 import { toast } from "sonner"
-import { ExternalLink, Eye, ImageOff, Loader, Plus, Sparkles, X } from "lucide-react"
+import { ExternalLink, Eye, ImageOff, Loader, Plus, X } from "lucide-react"
 import type {
   ProductRow,
   ListProductsResult,
@@ -271,8 +272,15 @@ export default function ProductsPage() {
   const showAddCol = builder.isActive && !builder.readOnly
   const catalogColSpan = showAddCol ? 8 : 7
 
-  const startNewOrder = () => {
+  // Manual branch of the unified New-order dialog: open the builder with the
+  // chosen client + description preset (no request text → no LLM, no wizard).
+  const startManualOrder = (opts: {
+    clientId: string | null
+    description: string
+  }) => {
     builder.openNew()
+    if (opts.clientId) builder.setClientId(opts.clientId)
+    if (opts.description) builder.setDescription(opts.description)
     setTab("catalog")
   }
   const editOrder = (id: string) => {
@@ -434,6 +442,10 @@ export default function ProductsPage() {
   const addDefaultQty = currentWizardItem
     ? parseQtyHint(currentWizardItem.quantityHint)
     : 1
+  // The catalog is ranked best-first while a wizard step is active, so the top
+  // row of page 1 is the most probable match — flag it for the rep.
+  const showBestMatch =
+    !!currentWizardItem?.searchTerms?.length && page === 1
 
   // Guards against an out-of-order response overwriting a newer one.
   const reqIdRef = useRef(0)
@@ -499,27 +511,22 @@ export default function ProductsPage() {
 
       <div className="w-full max-w-7xl px-4">
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          {/* New order is available from both tabs; it opens the builder and
-              switches to the Catalog tab (where the product picker lives). */}
+          {/* One "New order" entry point (both tabs). The dialog branches on
+              whether a client request was pasted: empty → manual builder;
+              filled → LLM split + assembly wizard. */}
           <div className="flex items-center justify-between gap-2">
             <TabsList>
               <TabsTrigger value="catalog">Product Catalog</TabsTrigger>
               <TabsTrigger value="orders">Orders</TabsTrigger>
             </TabsList>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                onClick={() => setRequestDialogOpen(true)}
-                disabled={builder.isActive}
-              >
-                <Sparkles className="h-4 w-4 mr-1" />
-                New order from request
-              </Button>
-              <Button size="sm" onClick={startNewOrder} disabled={builder.isActive}>
-                <Plus className="h-4 w-4 mr-1" />
-                New order
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              onClick={() => setRequestDialogOpen(true)}
+              disabled={builder.isActive}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              New order
+            </Button>
           </div>
 
           <TabsContent value="catalog" className="mt-4 space-y-4">
@@ -724,7 +731,7 @@ export default function ProductsPage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        rows.map((p) => (
+                        rows.map((p, idx) => (
                           <TableRow key={p.id}>
                             <TableCell>
                               {p.imageUrl ? (
@@ -761,7 +768,14 @@ export default function ProductsPage() {
                               )}
                             </TableCell>
                             <TableCell className="font-medium">
-                              {p.name}
+                              <span className="inline-flex items-center gap-2">
+                                {p.name}
+                                {showBestMatch && idx === 0 && (
+                                  <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">
+                                    Best match
+                                  </Badge>
+                                )}
+                              </span>
                             </TableCell>
                             <TableCell className="text-muted-foreground">
                               {p.category ?? "—"}
@@ -805,9 +819,18 @@ export default function ProductsPage() {
                               <TableCell className="text-center">
                                 <AddToOrderButton
                                   defaultQty={addDefaultQty}
+                                  disabled={
+                                    builder.stockOnly &&
+                                    (p.totalStock == null || p.totalStock <= 0)
+                                  }
                                   onAdd={(qty) =>
                                     builder.addProduct(
-                                      { id: p.id, name: p.name, price: p.price },
+                                      {
+                                        id: p.id,
+                                        name: p.name,
+                                        price: p.price,
+                                        stock: p.totalStock,
+                                      },
                                       qty,
                                     )
                                   }
@@ -906,10 +929,11 @@ export default function ProductsPage() {
         </Tabs>
       </div>
 
-      <NewOrderFromRequestDialog
+      <NewOrderDialog
         open={requestDialogOpen}
         onOpenChange={setRequestDialogOpen}
-        onCreated={startAssembly}
+        onManual={startManualOrder}
+        onAssemble={startAssembly}
       />
     </div>
   )
