@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { authClient } from "@/lib/auth-client"
 import { toast } from "sonner"
 import type { UserOrgInfo } from "@/app/api/admin/user-organizations/route"
 
@@ -54,22 +53,33 @@ export default function AdminSetOrgRoleDialog({
     if (!selectedMemberId) return
 
     startTransition(async () => {
-      const { error } = await authClient.organization.updateMemberRole({
-        memberId: selectedMemberId,
-        role,
-        organizationId: selectedOrg?.organizationId,
-      })
-
-      if (error) {
-        toast.error(error.message || "Failed to update org role")
-        return
+      try {
+        // Admin path goes through our server route (requireAdmin + direct DB),
+        // NOT the better-auth org plugin — that authorizes against the caller's
+        // own membership in the org, so a platform admin who isn't a member of
+        // the target org gets "member not found".
+        const res = await fetch("/api/admin/user-organizations", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "setRole",
+            memberId: selectedMemberId,
+            role,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          toast.error(data.error || "Failed to update org role")
+          return
+        }
+        toast.success(
+          `Org role updated to "${role}" for ${userName} in ${selectedOrg?.organizationName}`,
+        )
+        onSuccess?.()
+        setOpen(false)
+      } catch {
+        toast.error("Failed to update org role")
       }
-
-      toast.success(
-        `Org role updated to "${role}" for ${userName} in ${selectedOrg?.organizationName}`,
-      )
-      onSuccess?.()
-      setOpen(false)
     })
   }
 

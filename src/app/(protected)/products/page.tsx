@@ -291,21 +291,21 @@ export default function ProductsPage() {
     index: number
   } | null>(null)
 
-  // Pre-filter the catalog for one intent item (explicit → search phrase,
-  // discovery → catalog filters). Sets both the committed filters and the
-  // debounced text mirrors so the controls reflect the applied narrowing.
+  // Pre-narrow the catalog for one intent item. Discovery items apply their
+  // structured filters; the item's bilingual `searchTerms` (sent as the
+  // catalog `terms` param, derived from the wizard in `load`) do the ranked
+  // name matching for both modes. The free-text search box is left empty so
+  // the rep can still refine by hand on top of the ranked results.
   const applyItemToFilters = useCallback((item: OrderRequestItemView) => {
     const f = item.filters ?? {}
-    const phrase = item.searchPhrase ?? ""
     const min = f.priceMin != null ? String(f.priceMin) : ""
     const max = f.priceMax != null ? String(f.priceMax) : ""
-    setSearchInput(phrase)
+    setSearchInput("")
     setPriceMinInput(min)
     setPriceMaxInput(max)
     setAwardsInput("")
     setFilters({
       ...EMPTY_FILTERS,
-      q: phrase,
       category: f.category ?? ALL,
       type: f.type ?? ALL,
       color: f.color ?? ALL,
@@ -464,6 +464,11 @@ export default function ProductsPage() {
       if (filters.priceMin) params.set("priceMin", filters.priceMin)
       if (filters.priceMax) params.set("priceMax", filters.priceMax)
       if (filters.inStock !== ALL) params.set("inStock", filters.inStock)
+      // While the order-from-request wizard is on a step, rank the catalog by
+      // that item's bilingual search tokens (the page's primary matching lever
+      // for the assistant — see `applyItemToFilters`).
+      const wizardTerms = wizard?.items[wizard.index]?.searchTerms ?? []
+      if (wizardTerms.length > 0) params.set("terms", wizardTerms.join(","))
       const res = await fetch(`/api/products?${params.toString()}`)
       const data: ListProductsResult = await res.json()
       if (reqId !== reqIdRef.current) return
@@ -472,7 +477,7 @@ export default function ProductsPage() {
     } finally {
       if (reqId === reqIdRef.current) setLoading(false)
     }
-  }, [page, pageSize, filters])
+  }, [page, pageSize, filters, wizard])
 
   useEffect(() => {
     load()

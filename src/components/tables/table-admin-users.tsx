@@ -26,6 +26,7 @@ import AdminSetPasswordDialog from "@/components/forms/form-admin-set-password"
 import AdminSetRoleDialog from "@/components/forms/form-admin-set-role"
 import AdminBanUserDialog from "@/components/forms/form-admin-ban-user"
 import AdminSetOrgRoleDialog from "@/components/forms/form-admin-set-org-role"
+import AdminEditUserOrgsDialog from "@/components/forms/form-admin-edit-user-orgs"
 import type { UserOrgInfo } from "@/app/api/admin/user-organizations/route"
 
 type AdminUser = {
@@ -290,6 +291,12 @@ export function TableAdminUsers() {
                             onSuccess={refresh}
                           />
                         )}
+                        <AdminEditUserOrgsDialog
+                          userId={user.id}
+                          userName={user.name}
+                          orgDetails={userOrgDetails[user.id] ?? []}
+                          onSuccess={refresh}
+                        />
                         {user.role !== "admin" && (
                           <AdminBanUserDialog
                             userId={user.id}

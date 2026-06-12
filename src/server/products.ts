@@ -53,6 +53,12 @@ export type ProductInStock = "in" | "out"
 
 export type ListProductsParams = {
   q?: string
+  // Bilingual ranked search: products score +1 per term that hits, and the
+  // listing is filtered to score > 0 and ordered by score desc. Used by the
+  // order-from-request wizard to match mixed RU/EN catalog names without
+  // depending on a single transliteration or word order. Combinable with the
+  // structured filters below (filters narrow; terms rank within).
+  terms?: string[]
   category?: string
   // Exact-match filters over enumerable additional_metadata attributes.
   type?: string
@@ -110,6 +116,26 @@ const SEARCH_TEXT_KEYS = [
   "vendor",
 ] as const
 
+// `additional_metadata` keys probed by the bilingual TERM search. Deliberately
+// narrower than SEARCH_TEXT_KEYS — identity/attribute fields only, NOT prose
+// (`description`/`taste`/…) — so a token like "Dry" doesn't score every wine
+// whose tasting notes say "dry". Term matching targets the product's NAME and
+// its defining attributes across both languages.
+const TERM_MATCH_KEYS = [
+  "type",
+  "country_name",
+  "color",
+  "sugar",
+  "vendor",
+  "appelacion",
+  "region",
+  "aging",
+] as const
+
+// Min token length kept for term search — drops single chars / stray digits
+// that would match half the catalog.
+const MIN_TERM_LEN = 2
+
 export type ListProductsResult = {
   rows: ProductRow[]
   total: number
@@ -150,9 +176,40 @@ export async function listProducts(
   }
   const awards = params.awards?.trim()
 
+  // Bilingual ranked search: dedupe terms (case-insensitive), drop too-short
+  // ones, cap the count, and build a per-term hit score over the name +
+  // identity attributes. Products with zero hits are excluded; ordering is by
+  // hit count desc so the best multi-token matches surface first.
+  const uniqueTerms = [
+    ...new Map(
+      (params.terms ?? [])
+        .map((t) => t.trim())
+        .filter((t) => t.length >= MIN_TERM_LEN)
+        .map((t) => [t.toLowerCase(), t] as const),
+    ).values(),
+  ].slice(0, 16)
+  const hasTerms = uniqueTerms.length > 0
+
+  const termMatch = (t: string) => {
+    const like = `%${t}%`
+    return sql`(${product.name} ILIKE ${like} OR ${product.category} ILIKE ${like} OR ${product.accountingMetadata}::text ILIKE ${like} OR ${sql.join(
+      TERM_MATCH_KEYS.map(
+        (k) => sql`${product.additionalMetadata} ->> ${k} ILIKE ${like}`,
+      ),
+      sql` OR `,
+    )})`
+  }
+  const scoreExpr = hasTerms
+    ? sql<number>`(${sql.join(
+        uniqueTerms.map((t) => sql`CASE WHEN ${termMatch(t)} THEN 1 ELSE 0 END`),
+        sql` + `,
+      )})`
+    : null
+
   const where = and(
     eq(product.organizationId, activeOrgId),
     eq(product.status, "active"),
+    scoreExpr ? sql`${scoreExpr} > 0` : undefined,
     category && category.length > 0
       ? eq(product.category, category)
       : undefined,
@@ -209,7 +266,10 @@ export async function listProducts(
       })
       .from(product)
       .where(where)
-      .orderBy(asc(product.name))
+      .orderBy(
+        ...(scoreExpr ? [sql`${scoreExpr} DESC`] : []),
+        asc(product.name),
+      )
       .limit(limit)
       .offset(offset),
     db.select({ n: count() }).from(product).where(where),

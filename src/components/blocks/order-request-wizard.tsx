@@ -266,23 +266,17 @@ export function OrderRequestWizardStrip({
               Asked: {item.quantityHint}
             </Badge>
           )}
-          {item.mode === "explicit" && item.searchPhrase && (
-            <Badge variant="outline" className="font-normal">
-              Search: {item.searchPhrase}
-            </Badge>
-          )}
           {filterChips.map((c) => (
             <Badge key={c} variant="outline" className="font-normal">
               {c}
             </Badge>
           ))}
-          {item.mode === "discovery" &&
-            !hasAnyFilter(item.filters) &&
-            item.searchPhrase && (
-              <Badge variant="outline" className="font-normal">
-                Search: {item.searchPhrase}
-              </Badge>
-            )}
+          {/* Bilingual search tokens the catalog below is ranked by. */}
+          {item.searchTerms.map((t) => (
+            <Badge key={t} variant="secondary" className="font-normal">
+              {t}
+            </Badge>
+          ))}
         </div>
 
         <p className="text-xs text-muted-foreground">

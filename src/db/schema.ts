@@ -942,9 +942,15 @@ export const orderRequestItem = pgTable(
       .notNull()
       .default({})
       .$type<OrderRequestItemFilters>(),
-    // Latin-transliterated brand search (explicit) or a Russian phrase
-    // (discovery fallback). Fed to `listProducts({ q })`.
+    // Human-readable primary search phrase (best English/transliterated guess
+    // for explicit, or a Russian phrase for discovery) — used for display.
     searchPhrase: text("search_phrase"),
+    // Bilingual search tokens for ranked, order-independent catalog matching:
+    // each meaningful request word kept in Russian AND its English
+    // translation/transliteration, plus name-numbers. The catalog is mixed
+    // RU/EN, so a token-OR search ranked by hit count finds products a single
+    // transliterated phrase would miss. Fed to `listProducts({ terms })`.
+    searchTerms: text("search_terms").array(),
     // Raw quantity text as written, prefilled into the qty field when clean.
     quantityHint: text("quantity_hint"),
     status: orderRequestItemStatus("status").notNull().default("pending"),

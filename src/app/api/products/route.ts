@@ -61,8 +61,18 @@ export async function GET(request: NextRequest) {
     const limitRaw = Number.parseInt(searchParams.get("limit") ?? "25", 10)
     const offsetRaw = Number.parseInt(searchParams.get("offset") ?? "0", 10)
 
+    // Bilingual ranked-search tokens, comma-separated.
+    const termsRaw = searchParams.get("terms")
+    const terms = termsRaw
+      ? termsRaw
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+      : undefined
+
     const result = await listProducts({
       q: str("q"),
+      terms,
       category: str("category"),
       type: str("type"),
       color: str("color"),

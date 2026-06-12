@@ -40,6 +40,7 @@ export type OrderRequestItemView = {
   mode: OrderRequestItemMode
   filters: OrderRequestItemFilters
   searchPhrase: string | null
+  searchTerms: string[]
   quantityHint: string | null
   status: OrderRequestItemStatus
 }
@@ -87,8 +88,11 @@ const llmItemSchema = z.object({
   label: z.string(),
   mode: z.enum(["explicit", "discovery"]),
   // explicit → Latin transliteration of the named brand; discovery → optional
-  // Russian phrase (empty when filters fully express the intent).
+  // Russian phrase (empty when filters fully express the intent). Display only.
   searchPhrase: z.string(),
+  // Bilingual search tokens (both the original RU words AND their EN
+  // translation/transliteration) for ranked, order-independent matching.
+  searchTerms: z.array(z.string()),
   // Raw quantity text as written ("6", "15 л", "0,7"), empty when not stated.
   quantityHint: z.string(),
   filters: llmFilterSchema,
@@ -173,6 +177,19 @@ function buildParsePrompt(opts: {
     "  may also add a Russian `searchPhrase` for nuance not covered by",
     "  filters. `quantityHint` only if a quantity was stated.",
     "",
+    "For EVERY item also produce `searchTerms`: 3–10 short tokens used to FIND",
+    "the product in a catalog whose names MIX Russian and English. The search",
+    "matches ANY token and ranks products by how many tokens hit, so include",
+    "tokens in BOTH languages and do NOT worry about word order or exact",
+    "spelling. Build them from each meaningful word of the product (NOT",
+    "greetings, quantities, or units like «бут»/«л»/«шт»): keep the original",
+    "word AND add its English translation/transliteration. ALWAYS translate the",
+    "drink-kind word: Джин→Gin, Водка→Vodka, Вино→Wine, Виски→Whisky,",
+    "Текила→Tequila, Ром→Rum, Коньяк→Cognac, Ликёр→Liqueur,",
+    "Шампанское→Champagne, Игристое→Sparkling. Keep numbers that are part of",
+    "the name (135, 12). Example: «Джин хиога драй 135» →",
+    '["Джин","Gin","хиога","Hyoga","драй","Dry","135"]. Deduplicate.',
+    "",
     "Allowed catalog values — filter values MUST be copied EXACTLY from these",
     "lists (they are Russian, UPPERCASE for attributes). If nothing fits an",
     "intent, leave that filter empty and rely on `searchPhrase`:",
@@ -199,6 +216,28 @@ function buildParsePrompt(opts: {
     "REQUEST:",
     opts.rawText,
   ].join("\n")
+}
+
+// Multilingual connector particles that appear in many product names (RU + EN
+// + romance) and only add noise to a token-OR ranked search — the distinctive
+// words carry the match. Dropped from search terms (lowercased compare).
+const TERM_STOPWORDS = new Set([
+  "the", "and", "of", "de", "la", "le", "el", "los", "las", "del",
+  "della", "di", "du", "des", "da", "do", "dos", "von", "van",
+  "де", "ля", "ле", "ла", "лос", "лас", "дель", "ди", "да", "по", "на",
+])
+
+// Dedupe (case-insensitive) + trim search tokens, drop too-short ones +
+// connector stopwords, cap the count.
+function cleanTerms(terms: string[]): string[] {
+  return [
+    ...new Map(
+      terms
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2 && !TERM_STOPWORDS.has(t.toLowerCase()))
+        .map((t) => [t.toLowerCase(), t] as const),
+    ).values(),
+  ].slice(0, 16)
 }
 
 // Clean the LLM's sentinel-filled filter object into a sparse one.
@@ -285,6 +324,7 @@ export async function createAndParseOrderRequest(
           const phrase = it.searchPhrase.trim()
           const qty = it.quantityHint.trim()
           const label = it.label.trim()
+          const terms = cleanTerms(it.searchTerms ?? [])
           return {
             id: randomUUID(),
             requestId,
@@ -294,6 +334,7 @@ export async function createAndParseOrderRequest(
             mode: it.mode,
             filters: cleanFilters(it.filters),
             searchPhrase: phrase || null,
+            searchTerms: terms.length ? terms : null,
             quantityHint: qty || null,
             status: "pending" as const,
           }
@@ -356,6 +397,7 @@ export async function getOrderRequest(
       mode: it.mode,
       filters: (it.filters ?? {}) as OrderRequestItemFilters,
       searchPhrase: it.searchPhrase,
+      searchTerms: it.searchTerms ?? [],
       quantityHint: it.quantityHint,
       status: it.status,
     })),
