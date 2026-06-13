@@ -48,6 +48,11 @@ export function SyncActionBar({
           .map((s) => (
             <SyncButton key={s.id} source={s} onSynced={onSynced} />
           ))}
+        {sources
+          .filter((s) => getProvider(s.provider).capabilities.supportsManualFetch)
+          .map((s) => (
+            <TelegramFetchButton key={s.id} source={s} onSynced={onSynced} />
+          ))}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {hasArchiveSource && (
@@ -126,6 +131,74 @@ function SyncButton({
         <ProviderIcon className="h-4 w-4 mr-2" />
       )}
       Sync {source.name}
+    </Button>
+  )
+}
+
+// Telegram is push (webhook) in production, but exposes a manual getUpdates
+// PULL surfaced here — mainly for local dev where the webhook can't reach
+// the machine. POSTs to the org-scoped fetch route, which drains queued
+// messages into source_items. A 409 (webhook active) comes back as
+// `webhookActive: true` — we tell the user messages already arrive
+// automatically rather than treating it as an error.
+function TelegramFetchButton({
+  source,
+  onSynced,
+}: {
+  source: SystemSource
+  onSynced: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const ProviderIcon = getProvider(source.provider).icon
+
+  async function handleClick() {
+    setBusy(true)
+    try {
+      const res = await fetch("/api/sources/telegram/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId: source.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Fetch failed")
+      const { fetched, ingested, ignored, webhookActive } = data as {
+        fetched: number
+        ingested: number
+        ignored: number
+        webhookActive: boolean
+      }
+      if (webhookActive) {
+        toast.info(
+          `${source.name}: a webhook is active — messages arrive automatically, no manual fetch needed.`,
+        )
+      } else {
+        toast.success(
+          `${source.name} fetched — ${fetched} update${fetched === 1 ? "" : "s"} (${ingested} ingested, ${ignored} skipped)`,
+        )
+      }
+      onSynced()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error"
+      toast.error(`Fetch ${source.name}: ${msg}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-8"
+      onClick={handleClick}
+      disabled={busy}
+    >
+      {busy ? (
+        <Loader className="h-4 w-4 mr-2 animate-spin" />
+      ) : (
+        <ProviderIcon className="h-4 w-4 mr-2" />
+      )}
+      Fetch {source.name}
     </Button>
   )
 }

@@ -18,6 +18,8 @@ import { source } from "@/db/schema"
 import { getTelegramCredentials } from "@/server/providers/credentials"
 import { upsertSourceItem } from "@/server/source-items"
 import {
+  getTelegramUpdates,
+  isTelegramWebhookConflict,
   sendTelegramAck,
   setTelegramWebhook,
   telegramAppOrigin,
@@ -91,36 +93,26 @@ export function verifyTelegramSecret(
   return timingSafeEqual(a, b)
 }
 
-export type TelegramIngestResult =
-  | { ok: true; outcome: "ingested" | "ignored"; itemId?: string }
-  | { ok: false; reason: "unauthorized" }
+type PersistResult =
+  | { outcome: "ingested"; itemId: string; inserted: boolean; chatId: number }
+  | { outcome: "ignored" }
 
-// Process one Telegram update. Phase 1 scope: direct-message TEXT only —
-// group messages (Phase 3) and attachments (Phase 2) are ignored for now.
-// Idempotency rides on `upsertSourceItem`'s UNIQUE(source_id, external_id)
-// where external_id = `<chat_id>:<message_id>`, so a retried delivery
-// updates the existing row instead of inserting a duplicate.
-export async function ingestTelegramUpdate(
-  ctx: TelegramWebhookContext,
+// Persist one update into a source_item. Pure persistence — NO secret
+// verification, NO ack (callers own those). Phase 1 scope: direct-message
+// TEXT only; group messages (Phase 3) and attachments (Phase 2) are
+// ignored. Idempotency rides on `upsertSourceItem`'s
+// UNIQUE(source_id, external_id) where external_id = `<chat_id>:<msg_id>`,
+// so a re-delivered / re-pulled update updates the row instead of duping.
+async function persistTelegramMessage(
+  scope: { sourceId: string; organizationId: string | null },
   update: Update,
-  secretHeader: string | null,
-): Promise<TelegramIngestResult> {
-  if (!verifyTelegramSecret(ctx.webhookSecret, secretHeader)) {
-    return { ok: false, reason: "unauthorized" }
-  }
-
+): Promise<PersistResult> {
   const message = update.message
-  if (!message) return { ok: true, outcome: "ignored" }
+  if (!message) return { outcome: "ignored" }
+  if (message.chat.type !== "private") return { outcome: "ignored" }
 
-  // Phase 1: private chats only. Group @-mentions land in Phase 3.
-  if (message.chat.type !== "private") {
-    return { ok: true, outcome: "ignored" }
-  }
-
-  // Phase 1: text only. Attachments (photo/document/voice/…) land in
-  // Phase 2 via getFile + download → child source_items.
   const text = message.text?.trim()
-  if (!text) return { ok: true, outcome: "ignored" }
+  if (!text) return { outcome: "ignored" }
 
   const from = message.from
   const senderName =
@@ -128,16 +120,13 @@ export async function ingestTelegramUpdate(
     from?.username ||
     "Telegram user"
 
-  const externalId = `${message.chat.id}:${message.message_id}`
-  const sourceCreatedAt = new Date(message.date * 1000)
-
   const { id, inserted } = await upsertSourceItem({
-    sourceId: ctx.sourceId,
-    organizationId: ctx.organizationId,
-    externalId,
+    sourceId: scope.sourceId,
+    organizationId: scope.organizationId,
+    externalId: `${message.chat.id}:${message.message_id}`,
     externalType: "chat_message",
     threadExternalId: String(message.chat.id),
-    sourceCreatedAt,
+    sourceCreatedAt: new Date(message.date * 1000),
     metadataJson: {
       provider: "telegram",
       // `rawText` is the body the parser reads (mirrors WhatsApp) — no
@@ -164,24 +153,131 @@ export async function ingestTelegramUpdate(
     },
   })
 
-  // Best-effort ack — never let a send failure fail ingestion (the item is
-  // already persisted) or trigger a Telegram retry (we still return 200).
+  return { outcome: "ingested", itemId: id, inserted, chatId: message.chat.id }
+}
+
+export type TelegramIngestResult =
+  | { ok: true; outcome: "ingested" | "ignored"; itemId?: string }
+  | { ok: false; reason: "unauthorized" }
+
+// Webhook delivery path: verify the echoed secret, persist, then ack the
+// chat. We still return 200 on ack failure so Telegram doesn't retry.
+export async function ingestTelegramUpdate(
+  ctx: TelegramWebhookContext,
+  update: Update,
+  secretHeader: string | null,
+): Promise<TelegramIngestResult> {
+  if (!verifyTelegramSecret(ctx.webhookSecret, secretHeader)) {
+    return { ok: false, reason: "unauthorized" }
+  }
+
+  const result = await persistTelegramMessage(
+    { sourceId: ctx.sourceId, organizationId: ctx.organizationId },
+    update,
+  )
+  if (result.outcome === "ignored") return { ok: true, outcome: "ignored" }
+
   try {
     await sendTelegramAck(
       ctx.botToken,
-      message.chat.id,
-      inserted
+      result.chatId,
+      result.inserted
         ? "✅ Received — added to your Truffalo sources for processing."
         : "✅ Already received — thanks.",
     )
   } catch (err) {
     console.warn(
-      `[telegram] ack failed for source ${ctx.sourceId} chat ${message.chat.id}:`,
+      `[telegram] ack failed for source ${ctx.sourceId} chat ${result.chatId}:`,
       err,
     )
   }
 
-  return { ok: true, outcome: "ingested", itemId: id }
+  return { ok: true, outcome: "ingested", itemId: result.itemId }
+}
+
+export type TelegramFetchResult = {
+  fetched: number
+  ingested: number
+  ignored: number
+  // True when Telegram refused getUpdates because a webhook is active —
+  // in that case messages arrive automatically via the webhook instead.
+  webhookActive: boolean
+}
+
+// Manual long-poll pull. Drains queued updates via getUpdates and persists
+// them, advancing a per-source `telegramOffset` cursor (stored in the
+// non-secret provider_config) so each call only sees new messages. This is
+// the org-scoped "Fetch" button's backend — primarily for local dev / any
+// time no webhook is delivering. Caller (route) is responsible for the
+// session + `assertSourceInScope` tenant check before invoking.
+const FETCH_DRAIN_PAGES = 10 // ×100 updates = up to 1000 per click
+const FETCH_PAGE_LIMIT = 100
+
+export async function fetchTelegramUpdates(
+  sourceId: string,
+): Promise<TelegramFetchResult> {
+  const rows = await db
+    .select({
+      id: source.id,
+      provider: source.provider,
+      status: source.status,
+      organizationId: source.ownerOrganizationId,
+      providerConfig: source.providerConfig,
+      credentialsRef: source.credentialsRef,
+    })
+    .from(source)
+    .where(eq(source.id, sourceId))
+    .limit(1)
+  const row = rows[0]
+  if (!row || row.provider !== "telegram" || row.status !== "active") {
+    throw new Error(`Source ${sourceId} is not an active telegram source`)
+  }
+
+  const { botToken } = getTelegramCredentials(sourceId, row.credentialsRef)
+  const cfg = (row.providerConfig as Record<string, unknown> | null) ?? {}
+  let offset =
+    typeof cfg.telegramOffset === "number" ? cfg.telegramOffset : undefined
+
+  const scope = { sourceId, organizationId: row.organizationId }
+  let fetched = 0
+  let ingested = 0
+  let ignored = 0
+
+  for (let page = 0; page < FETCH_DRAIN_PAGES; page++) {
+    let updates
+    try {
+      updates = await getTelegramUpdates(botToken, {
+        offset,
+        limit: FETCH_PAGE_LIMIT,
+      })
+    } catch (err) {
+      if (isTelegramWebhookConflict(err)) {
+        return { fetched, ingested, ignored, webhookActive: true }
+      }
+      throw err
+    }
+    if (updates.length === 0) break
+
+    for (const u of updates) {
+      fetched++
+      const r = await persistTelegramMessage(scope, u)
+      if (r.outcome === "ingested") ingested++
+      else ignored++
+      // Next offset = highest seen update_id + 1 (confirms processed ones).
+      offset = Math.max(offset ?? 0, u.update_id + 1)
+    }
+    if (updates.length < FETCH_PAGE_LIMIT) break
+  }
+
+  // Persist the advanced cursor so the next click only sees new messages.
+  if (offset !== undefined) {
+    await db
+      .update(source)
+      .set({ providerConfig: { ...cfg, telegramOffset: offset } })
+      .where(eq(source.id, sourceId))
+  }
+
+  return { fetched, ingested, ignored, webhookActive: false }
 }
 
 // Register this source's bot webhook with Telegram. Called as a

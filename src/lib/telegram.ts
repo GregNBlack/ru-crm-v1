@@ -1,6 +1,7 @@
 import "server-only"
 
-import { Bot } from "grammy"
+import { Bot, GrammyError } from "grammy"
+import type { Update } from "grammy/types"
 
 // Thin grammY wrapper for the per-org Telegram bot model. Every helper
 // takes the bot token explicitly (decrypted from `source.credentials_ref`)
@@ -71,4 +72,29 @@ export async function sendTelegramAck(
   text: string,
 ): Promise<void> {
   await botApi(botToken).sendMessage(chatId, text)
+}
+
+// Long-poll pull. The manual-fetch counterpart to the webhook push — used
+// to ingest on demand when no webhook is delivering (local dev, or before
+// a public URL is configured). `timeout: 0` = return immediately with
+// whatever is queued (no long-poll wait). Passing `offset` confirms (and
+// drops) every update below it server-side, so the next call only returns
+// new ones. NOTE: Telegram refuses getUpdates while a webhook is active
+// (409) — detect with `isTelegramWebhookConflict`.
+export async function getTelegramUpdates(
+  botToken: string,
+  opts: { offset?: number; limit?: number },
+): Promise<Update[]> {
+  return botApi(botToken).getUpdates({
+    offset: opts.offset,
+    limit: opts.limit ?? 100,
+    timeout: 0,
+    allowed_updates: [...ALLOWED_UPDATES],
+  })
+}
+
+// True when a getUpdates call failed because a webhook is registered for
+// the bot — the manual pull and the webhook push are mutually exclusive.
+export function isTelegramWebhookConflict(err: unknown): boolean {
+  return err instanceof GrammyError && err.error_code === 409
 }

@@ -51,6 +51,12 @@ export type ProviderCapabilities = {
   // currently aichat is the only internal provider and it's off, but
   // the flag stays separate so the distinction is explicit.
   supportsAutomatedPipeline: boolean
+  // True when the provider exposes an on-demand manual PULL (distinct from
+  // `supportsRemoteSync`, which also drives the cron). Telegram is push
+  // (webhook) in production but offers a manual `getUpdates` pull — surfaced
+  // as a per-source "Fetch" button on the Sources page, mainly for local
+  // dev where the webhook can't reach the machine. Kept OFF the cron.
+  supportsManualFetch: boolean
 }
 
 export type ProviderMetadata = {
@@ -93,6 +99,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: true,
       supportsAutomatedPipeline: true,
+      supportsManualFetch: false,
     },
   },
   gchat: {
@@ -109,6 +116,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: true,
       supportsAutomatedPipeline: true,
+      supportsManualFetch: false,
     },
   },
   gdrive: {
@@ -125,6 +133,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: true,
       supportsAutomatedPipeline: true,
+      supportsManualFetch: false,
     },
   },
   dropoff: {
@@ -141,6 +150,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: true,
       hasRawBytesPersisted: false,
       supportsAutomatedPipeline: false,
+      supportsManualFetch: false,
     },
   },
   whatsapp: {
@@ -157,6 +167,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: true,
       supportsAutomatedPipeline: false,
+      supportsManualFetch: false,
     },
   },
   aichat: {
@@ -173,6 +184,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: false,
       supportsAutomatedPipeline: false,
+      supportsManualFetch: false,
     },
   },
   telegram: {
@@ -195,6 +207,7 @@ export const PROVIDERS: Record<SourceProvider, ProviderMetadata> = {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: true,
       supportsAutomatedPipeline: true,
+      supportsManualFetch: true,
     },
   },
 }
@@ -223,6 +236,7 @@ export function getProvider(p: SourceProvider | string): ProviderMetadata {
       supportsDropoffUpload: false,
       hasRawBytesPersisted: false,
       supportsAutomatedPipeline: false,
+      supportsManualFetch: false,
     },
   }
 }
