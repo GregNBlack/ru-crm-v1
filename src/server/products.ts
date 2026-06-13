@@ -211,7 +211,13 @@ export async function listProducts(
   const termScore = (t: string) => {
     const like = `%${t}%`
     const w = termWeight(t)
-    return sql`${w} * GREATEST(
+    // `w` is a JS float (0.8 / 1.3 / 1.8 / 2.5) sent as an untyped param. In
+    // `$param * GREATEST(<int CASEs>)` Postgres resolves `unknown * int4` and
+    // tries to cast the literal to INTEGER → "invalid input syntax for type
+    // integer: 0.8" (every terms query 500s → empty catalog). Cast to float8
+    // so the multiplication stays numeric. (Regression from the ranked-search
+    // rewrite in dc63edf — see PHASE2 / git blame.)
+    return sql`(${w})::float8 * GREATEST(
       CASE WHEN ${product.name} ILIKE ${like} THEN ${FIELD_W.name} ELSE 0 END,
       CASE WHEN ${product.category} ILIKE ${like} THEN ${FIELD_W.category} ELSE 0 END,
       CASE WHEN ${product.accountingMetadata}::text ILIKE ${like} THEN ${FIELD_W.accounting} ELSE 0 END,
