@@ -63,6 +63,7 @@ const cardOutputSchema = z.object({
     "DATA_INTELLIGENCE",
     "MOMENTUM",
     "LOG_ONLY",
+    "NEW_ORDER",
   ]),
   message: z.object({
     analysis: z.string(),
@@ -91,6 +92,8 @@ function normaliseCategory(c: string): CardCategory {
       return "momentum"
     case "LOG_ONLY":
       return "log_only"
+    case "NEW_ORDER":
+      return "new_order"
     default:
       throw new Error(`Unmapped category: ${c}`)
   }
@@ -573,6 +576,23 @@ export async function generateCards(
         ),
       )
 
+      // For "new_order" cards, stamp the VERBATIM client message so the
+      // card's "Create order" button can prefill the New Order dialog's
+      // request field unchanged. Prefer the raw source text
+      // (Telegram/WhatsApp `metadata_json.rawText` / `text`); fall back to the
+      // parsed markdown only if no raw body exists (non-chat providers).
+      let orderRequest: string | undefined
+      if (category === "new_order") {
+        const meta = (item.metadataJson ?? {}) as Record<string, unknown>
+        const raw =
+          typeof meta.rawText === "string" && meta.rawText.trim()
+            ? meta.rawText
+            : typeof meta.text === "string" && meta.text.trim()
+              ? meta.text
+              : truncated
+        orderRequest = raw
+      }
+
       const cardId = randomUUID()
       await db.insert(card).values({
         id: cardId,
@@ -582,6 +602,7 @@ export async function generateCards(
         message: {
           analysis: output.message.analysis ?? "",
           recommendation: output.message.recommendation ?? "",
+          ...(orderRequest ? { orderRequest } : {}),
         },
         sourceItemId: item.id,
         ruleId: ruleRow.id,
@@ -678,7 +699,7 @@ Return JSON matching this exact shape (every field is required):
   {
     "relevant": boolean,
     "priority": "normal" | "high",
-    "category": "CLIENT_ACTIVITY" | "COLLEAGUES_ACTIVITY" | "BUSINESS_INFO" | "ACTION_REQUIRED" | "AMBIGUITY" | "DATA_INTELLIGENCE" | "MOMENTUM" | "LOG_ONLY",
+    "category": "CLIENT_ACTIVITY" | "COLLEAGUES_ACTIVITY" | "BUSINESS_INFO" | "ACTION_REQUIRED" | "AMBIGUITY" | "DATA_INTELLIGENCE" | "MOMENTUM" | "LOG_ONLY" | "NEW_ORDER",
     "message": { "analysis": "...", "recommendation": "..." },
     "clients": ["..."],   // names from the Known clients list above; [] if none match
     "users":   ["..."]    // names from the Known users list above;   [] if none match

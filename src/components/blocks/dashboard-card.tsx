@@ -24,6 +24,7 @@ import {
   Building2,
   Check,
   FileText,
+  ShoppingCart,
   Users,
   X,
 } from "lucide-react"
@@ -46,6 +47,7 @@ const CATEGORY_LABEL: Record<CardCategory, string> = {
   data_intelligence: "Data intelligence",
   momentum: "Momentum",
   log_only: "Log only",
+  new_order: "New order",
 }
 
 const CATEGORY_COLOR: Record<CardCategory, string> = {
@@ -57,6 +59,7 @@ const CATEGORY_COLOR: Record<CardCategory, string> = {
   data_intelligence: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300",
   momentum: "bg-teal-500/15 text-teal-600 dark:text-teal-300",
   log_only: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300",
+  new_order: "bg-lime-500/15 text-lime-700 dark:text-lime-300",
 }
 
 const PRIORITY_COLOR: Record<CardPriority, string> = {
@@ -309,8 +312,25 @@ export function DashboardCard({
           </div>
         )}
 
-        {!resolved && (
-          <div className="flex gap-2 pt-2 mt-auto">
+        {(card.category === "new_order" || !resolved) && (
+          <div className="flex flex-col gap-2 pt-2 mt-auto">
+            {card.category === "new_order" && (
+              <Button
+                asChild
+                size="sm"
+                className="bg-lime-600 text-white hover:bg-lime-600/90"
+              >
+                {/* Hands the card off to /products, where the New Order dialog
+                    opens prefilled with the linked client + the verbatim
+                    client message (message.orderRequest). */}
+                <Link href={`/products?orderFromCard=${card.id}`}>
+                  <ShoppingCart className="h-4 w-4 mr-1" />
+                  Create order
+                </Link>
+              </Button>
+            )}
+            {!resolved && (
+            <div className="flex gap-2">
             <Button
               size="sm"
               className="flex-1"
@@ -364,6 +384,8 @@ export function DashboardCard({
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            </div>
+            )}
           </div>
         )}
       </CardContent>

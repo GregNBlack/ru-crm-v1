@@ -598,6 +598,11 @@ export const cardCategory = pgEnum("card_category", [
   "data_intelligence",
   "momentum",
   "log_only",
+  // The source message looks like a client product order. The card carries
+  // the verbatim client message in `message.orderRequest` and renders a
+  // "Create order" button that opens the New Order dialog on /products
+  // prefilled with the client + that message (→ the order-from-request flow).
+  "new_order",
 ])
 
 export type CardCategory = (typeof cardCategory.enumValues)[number]

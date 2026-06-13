@@ -20,6 +20,11 @@ import { randomUUID } from "crypto"
 export type CardMessage = {
   analysis: string
   recommendation: string
+  // Only set on `new_order` cards: the VERBATIM client message from the
+  // source (Telegram `metadata_json.rawText`), stamped at generation time so
+  // the card's "Create order" button can prefill the New Order dialog's
+  // request field unchanged. Absent on every other category.
+  orderRequest?: string
 }
 
 export type CardClientRef = { id: string; name: string }
@@ -134,6 +139,9 @@ function normaliseMessage(raw: unknown): CardMessage {
     analysis: typeof obj.analysis === "string" ? obj.analysis : "",
     recommendation:
       typeof obj.recommendation === "string" ? obj.recommendation : "",
+    ...(typeof obj.orderRequest === "string" && obj.orderRequest.length > 0
+      ? { orderRequest: obj.orderRequest }
+      : {}),
   }
 }
 

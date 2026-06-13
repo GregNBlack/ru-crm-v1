@@ -48,11 +48,18 @@ export function NewOrderDialog({
   onOpenChange,
   onManual,
   onAssemble,
+  initialClientId,
+  initialRawText,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onManual: (opts: { clientId: string | null; description: string }) => void
   onAssemble: (requestId: string) => void
+  // Prefill values when opened from a card's "Create order" button: the
+  // linked client and the VERBATIM client message (goes straight into the
+  // request textarea so the existing AI-assembly path runs on it unchanged).
+  initialClientId?: string | null
+  initialRawText?: string | null
 }) {
   const [clientOptions, setClientOptions] = useState<OrderClientOption[]>([])
   const [clientId, setClientId] = useState<string>("")
@@ -71,6 +78,17 @@ export function NewOrderDialog({
         loaded.current = false
       })
   }, [open])
+
+  // On each open, seed the form from the optional prefill props (empty when
+  // opened normally from the toolbar). Runs only when `open` toggles to true
+  // — the prefill props are stable for the duration of one open session.
+  useEffect(() => {
+    if (open) {
+      setClientId(initialClientId ?? "")
+      setRawText(initialRawText ?? "")
+      setComment("")
+    }
+  }, [open, initialClientId, initialRawText])
 
   const reset = () => {
     setClientId("")

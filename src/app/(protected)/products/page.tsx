@@ -299,6 +299,35 @@ export default function ProductsPage() {
     index: number
   } | null>(null)
 
+  // Handoff from a card's "Create order" button (/products?orderFromCard=<id>):
+  // fetch the card, prefill the New Order dialog with its linked client + the
+  // VERBATIM client message (message.orderRequest), open it, and strip the
+  // param so a refresh / back-nav doesn't re-trigger.
+  const [cardPrefill, setCardPrefill] = useState<{
+    clientId: string | null
+    rawText: string
+  } | null>(null)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const cardId = params.get("orderFromCard")
+    if (!cardId) return
+    window.history.replaceState(null, "", window.location.pathname)
+    void (async () => {
+      try {
+        const res = await fetch(`/api/cards?id=${encodeURIComponent(cardId)}`)
+        if (!res.ok) return
+        const { card } = await res.json()
+        setCardPrefill({
+          clientId: card?.clients?.[0]?.id ?? null,
+          rawText: card?.message?.orderRequest ?? "",
+        })
+        setRequestDialogOpen(true)
+      } catch {
+        /* ignore — just don't auto-open the dialog */
+      }
+    })()
+  }, [])
+
   // Pre-narrow the catalog for one intent item. Discovery items apply their
   // structured filters; the item's bilingual `searchTerms` (sent as the
   // catalog `terms` param, derived from the wizard in `load`) do the ranked
@@ -931,9 +960,14 @@ export default function ProductsPage() {
 
       <NewOrderDialog
         open={requestDialogOpen}
-        onOpenChange={setRequestDialogOpen}
+        onOpenChange={(o) => {
+          setRequestDialogOpen(o)
+          if (!o) setCardPrefill(null)
+        }}
         onManual={startManualOrder}
         onAssemble={startAssembly}
+        initialClientId={cardPrefill?.clientId ?? null}
+        initialRawText={cardPrefill?.rawText ?? null}
       />
     </div>
   )

@@ -22,6 +22,7 @@ import {
   Check,
   FileText,
   Link2,
+  ShoppingCart,
   Users,
   X,
 } from "lucide-react"
@@ -44,6 +45,7 @@ const CATEGORY_LABEL: Record<CardCategory, string> = {
   data_intelligence: "Data intelligence",
   momentum: "Momentum",
   log_only: "Log only",
+  new_order: "New order",
 }
 
 const CATEGORY_COLOR: Record<CardCategory, string> = {
@@ -55,6 +57,7 @@ const CATEGORY_COLOR: Record<CardCategory, string> = {
   data_intelligence: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300",
   momentum: "bg-teal-500/15 text-teal-600 dark:text-teal-300",
   log_only: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300",
+  new_order: "bg-lime-500/15 text-lime-700 dark:text-lime-300",
 }
 
 const PRIORITY_COLOR: Record<CardPriority, string> = {
@@ -263,6 +266,22 @@ export function CardDetailShell({ card }: { card: CardRow }) {
                 </div>
               )}
             </section>
+          )}
+
+          {card.category === "new_order" && (
+            <div className="flex pt-3 border-t border-border/40">
+              <Button
+                asChild
+                className="flex-1 bg-lime-600 text-white hover:bg-lime-600/90"
+              >
+                {/* → /products, where the New Order dialog opens prefilled with
+                    the linked client + the verbatim client message. */}
+                <Link href={`/products?orderFromCard=${card.id}`}>
+                  <ShoppingCart className="h-4 w-4 mr-1" />
+                  Create order
+                </Link>
+              </Button>
+            </div>
           )}
 
           {!resolved && (

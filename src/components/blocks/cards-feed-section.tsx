@@ -50,6 +50,7 @@ const CATEGORIES = [
   "data_intelligence",
   "momentum",
   "log_only",
+  "new_order",
 ] as const
 
 const CATEGORY_LABEL: Record<(typeof CATEGORIES)[number], string> = {
@@ -61,6 +62,7 @@ const CATEGORY_LABEL: Record<(typeof CATEGORIES)[number], string> = {
   data_intelligence: "Data intelligence",
   momentum: "Momentum",
   log_only: "Log only",
+  new_order: "New order",
 }
 
 function usePaged<T>(items: T[]) {

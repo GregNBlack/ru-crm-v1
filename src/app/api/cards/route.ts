@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import {
   listCards,
+  getCard,
   createCard,
   updateCard,
   acceptCard,
@@ -26,8 +27,18 @@ function errorResponse(error: unknown) {
   return NextResponse.json({ error: message }, { status })
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    // `?id=` → single card (used by the /products "Create order" handoff to
+    // fetch the linked client + verbatim order request). Otherwise the list.
+    const id = request.nextUrl.searchParams.get("id")
+    if (id) {
+      const card = await getCard(id)
+      if (!card) {
+        return NextResponse.json({ error: "Card not found" }, { status: 404 })
+      }
+      return NextResponse.json({ card })
+    }
     const cards = await listCards()
     return NextResponse.json({ cards })
   } catch (error) {
