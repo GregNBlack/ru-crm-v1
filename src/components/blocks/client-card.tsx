@@ -99,7 +99,7 @@ export function ClientCard({
           />
         </div>
       </CardHeader>
-      <CardContent className="flex-1 space-y-3 text-sm">
+      <CardContent className="flex flex-1 flex-col space-y-3 text-sm">
         <div className="space-y-1 text-muted-foreground">
           {client.email && (
             <div className="flex items-center gap-2 truncate">
@@ -161,9 +161,12 @@ export function ClientCard({
           </div>
         )}
 
+        {/* Spacer pushes the creator/details row to the bottom of the card so
+            it stays aligned across cards of different content height. */}
+        <div className="flex-1" aria-hidden />
         <div className="flex items-center justify-between gap-2 pt-1">
           <span className="text-xs text-muted-foreground truncate">
-            {client.userName ? `Создал ${client.userName}` : ""}
+            {client.userName ? `Кто создал: ${client.userName}` : ""}
           </span>
           <Button asChild variant="outline" size="sm" className="shrink-0">
             <Link href={`/clients/${client.id}`}>

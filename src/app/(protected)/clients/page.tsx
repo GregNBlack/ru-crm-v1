@@ -37,6 +37,7 @@ import { ContactCard } from "@/components/blocks/contact-card"
 import { DealCard } from "@/components/blocks/deal-card"
 import { DiscoverDialog } from "@/components/blocks/discover-dialog"
 import { DiscoverDealsDialog } from "@/components/blocks/discover-deals-dialog"
+import { dealStageLabel } from "@/lib/deal-funnel"
 
 const PAGE_SIZE = 6
 // Clients + Contacts share one merged tab with two stacked grids; 3 cards
@@ -599,7 +600,7 @@ export default function ClientsPage() {
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-baseline gap-2 min-w-0">
                     <span className="text-sm text-muted-foreground">
-                      Текущая стоимость воронки продаж:
+                      Взвешенный объем воронки продаж:
                     </span>
                     <span className="text-xl font-semibold text-orange-300">
                       €
@@ -699,7 +700,7 @@ export default function ClientsPage() {
                     <TabsList className="flex-wrap h-auto">
                       {dealStages.map((s) => (
                         <TabsTrigger key={s.id} value={s.id}>
-                          {s.name}
+                          {dealStageLabel(s.name)}
                           <span className="ml-1.5 text-xs text-muted-foreground">
                             ({(dealsByStage.get(s.id) ?? []).length})
                           </span>
@@ -716,8 +717,8 @@ export default function ClientsPage() {
                             onChanged={refreshAll}
                             emptyLabel={
                               hasDealFilters
-                                ? `Нет сделок по фильтрам на этапе «${s.name}».`
-                                : `Нет сделок на этапе «${s.name}».`
+                                ? `Нет сделок по фильтрам на этапе «${dealStageLabel(s.name)}».`
+                                : `Нет сделок на этапе «${dealStageLabel(s.name)}».`
                             }
                           />
                         </TabsContent>

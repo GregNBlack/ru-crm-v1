@@ -146,15 +146,55 @@ const MIN_TERM_LEN = 2
 // the brand word living in the name dominates a category/country match.
 const FIELD_W = { name: 3, category: 2, accounting: 2, attr: 1 } as const
 
+// Generic drink-KIND words (the ones the order-request prompt always asks the
+// model to translate: Вино/Wine, Игристое/Sparkling, Джин/Gin, …). They match
+// huge swathes of the catalog and carry almost no discriminating signal, yet
+// the LLM includes them inconsistently — and a length-based weight rated
+// "Wine"/"Вино" (len 4) at 1.3, enough to reshuffle the ranking when present.
+// Pinning them to a tiny weight makes their presence/absence barely move
+// results, so the brand/grape words decide the ranking. Both languages, plus
+// the few spellings the model emits. Compared lowercased.
+const KIND_WORDS = new Set([
+  "вино", "wine", "игристое", "sparkling", "шампанское", "champagne",
+  "джин", "gin", "водка", "vodka", "виски", "whisky", "whiskey",
+  "текила", "tequila", "ром", "rum", "коньяк", "cognac",
+  "ликёр", "ликер", "liqueur",
+])
+const KIND_WORD_WEIGHT = 0.25
+
 // Per-term distinctiveness weight: rare/long/numeric tokens (brand words,
 // proof/age numbers like "135") discriminate far better than short common
 // kind-words ("Gin", "Dry", "Вино"), so they should dominate the score.
 function termWeight(t: string): number {
+  if (KIND_WORDS.has(t.toLowerCase())) return KIND_WORD_WEIGHT
   if (/^\d+$/.test(t)) return 2.5
   if (t.length >= 6) return 1.8
   if (t.length >= 4) return 1.3
   return 0.8
 }
+
+// Fuzzy (trigram) brand matching kicks in only for distinctive brand-length
+// tokens — short/common words would match noise. A token this long that ISN'T
+// an exact substring of a product name still counts as a name hit when its
+// pg_trgm word_similarity clears FUZZY_SIM. This rescues brand transliteration
+// drift (e.g. the model writing "Descombes" for catalog "Descombe"), which
+// otherwise drops the actually-requested product out of the ranking entirely.
+const FUZZY_MIN_LEN = 6
+const FUZZY_SIM = 0.6
+
+// Ranked-search relevance cutoff. Terms rank rather than filter (so a pure
+// transliteration miss never blanks the catalog — see the WHERE note below),
+// but without ANY cutoff the result `total` is the whole catalog: every row
+// the structured filters leave in, ranked, even the ones that match no term.
+// To "drop very low probability" matches we keep only rows scoring at least
+// this fraction of the BEST score in the candidate set. A strong multi-term
+// hit (brand in the name + grape) raises the bar so the long tail of rows
+// that matched only one short common word ("Noir" / "Wine") falls away, while
+// genuinely strong matches survive. Applied ONLY when something actually
+// matched (max score > 0); when nothing matches we fall back to the full
+// ranked catalog so the wizard step never shows an empty table. Tunable:
+// higher = tighter/shorter list, lower = more permissive.
+const MIN_SCORE_RATIO = 0.4
 
 export type ListProductsResult = {
   rows: ProductRow[]
@@ -221,6 +261,17 @@ export async function listProducts(
   const termScore = (t: string) => {
     const like = `%${t}%`
     const w = termWeight(t)
+    // Distinctive brand-length tokens get a fuzzy fallback on the NAME: an
+    // exact substring scores FIELD_W.name, but a close trigram match (e.g.
+    // "Descombes" ≈ "Descombe") also counts as a full name hit so a one-letter
+    // transliteration drift no longer hides the requested product.
+    const fuzzy = t.length >= FUZZY_MIN_LEN && !KIND_WORDS.has(t.toLowerCase())
+    const nameHit = fuzzy
+      ? sql`CASE
+            WHEN ${product.name} ILIKE ${like} THEN ${FIELD_W.name}
+            WHEN word_similarity(${t}, ${product.name}) >= ${FUZZY_SIM} THEN ${FIELD_W.name}
+            ELSE 0 END`
+      : sql`CASE WHEN ${product.name} ILIKE ${like} THEN ${FIELD_W.name} ELSE 0 END`
     // `w` is a JS float (0.8 / 1.3 / 1.8 / 2.5) sent as an untyped param. In
     // `$param * GREATEST(<int CASEs>)` Postgres resolves `unknown * int4` and
     // tries to cast the literal to INTEGER → "invalid input syntax for type
@@ -228,7 +279,7 @@ export async function listProducts(
     // so the multiplication stays numeric. (Regression from the ranked-search
     // rewrite in dc63edf — see PHASE2 / git blame.)
     return sql`(${w})::float8 * GREATEST(
-      CASE WHEN ${product.name} ILIKE ${like} THEN ${FIELD_W.name} ELSE 0 END,
+      ${nameHit},
       CASE WHEN ${product.category} ILIKE ${like} THEN ${FIELD_W.category} ELSE 0 END,
       CASE WHEN ${product.accountingMetadata}::text ILIKE ${like} THEN ${FIELD_W.accounting} ELSE 0 END,
       ${sql.join(
@@ -247,11 +298,14 @@ export async function listProducts(
       )})`
     : null
 
-  const where = and(
+  const baseWhere = and(
     eq(product.organizationId, activeOrgId),
     eq(product.status, "active"),
     // NOTE: terms intentionally do NOT appear here — they rank (orderBy), not
-    // filter, so an unmatched term never empties the catalog. See termScore.
+    // filter, so an unmatched term never empties the catalog. The relevance
+    // CUTOFF below (relative to the best score) is what trims the long tail;
+    // it's gated on max-score > 0 for the same never-blank reason. See
+    // termScore + MIN_SCORE_RATIO.
     category && category.length > 0
       ? eq(product.category, category)
       : undefined,
@@ -294,6 +348,24 @@ export async function listProducts(
         : undefined,
   )
 
+  // Relevance cutoff (only meaningful when terms were supplied). One cheap
+  // aggregate pass over the structured-filtered set finds the best score; we
+  // then keep rows within MIN_SCORE_RATIO of it. Gated on max > 0 so a
+  // transliteration miss (every row scores 0) falls back to the full ranked
+  // catalog instead of an empty table.
+  let where = baseWhere
+  if (hasTerms && scoreExpr) {
+    const maxRow = await db
+      .select({ m: sql<number | null>`MAX(${scoreExpr})` })
+      .from(product)
+      .where(baseWhere)
+    const maxScore = Number(maxRow[0]?.m ?? 0)
+    if (maxScore > 0) {
+      const threshold = maxScore * MIN_SCORE_RATIO
+      where = and(baseWhere, sql`${scoreExpr} >= ${threshold}`)
+    }
+  }
+
   const [rows, totalRows] = await Promise.all([
     db
       .select({
@@ -316,6 +388,12 @@ export async function listProducts(
           ? [sql`${scoreExpr} DESC`, sql`char_length(${product.name}) ASC`]
           : []),
         asc(product.name),
+        // Final unique tiebreaker. The catalog has many same-named SKUs that
+        // tie on score AND name; without a stable last key Postgres returns
+        // them in arbitrary, run-varying physical order, so the top row (the
+        // "Best match" badge) and the page-boundary cut shuffled between
+        // identical queries. Ordering by id makes every query reproducible.
+        asc(product.id),
       )
       .limit(limit)
       .offset(offset),

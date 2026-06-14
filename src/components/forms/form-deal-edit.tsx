@@ -39,6 +39,7 @@ import type {
   DealFunnelStageOption,
 } from "@/app/api/deals/route"
 import type { DealStatus } from "@/db/schema"
+import { dealStageLabel } from "@/lib/deal-funnel"
 
 // Edit-form status options. `active` is the live state; `cancelled` =
 // lost/withdrawn (kept for analytics); `deleted` = test/mistake, hidden
@@ -351,7 +352,7 @@ export default function DealEditDialog({
                       <SelectContent>
                         {stageOptions.map((s) => (
                           <SelectItem key={s.id} value={s.id}>
-                            {s.name}{" "}
+                            {dealStageLabel(s.name)}{" "}
                             <span className="text-muted-foreground">
                               ({Math.round(s.closureProbability * 100)}%)
                             </span>

@@ -30,6 +30,7 @@ import type {
   GenerateDealsResult,
   PlannedDealAction,
 } from "@/app/api/deals/discover/route"
+import { dealStageLabel } from "@/lib/deal-funnel"
 
 type Period = "last_day" | "last_3_days" | "last_week" | "specific"
 
@@ -545,7 +546,7 @@ export function DiscoverDealsDialog({
                           </span>
                           {a.stageName && (
                             <span className="text-muted-foreground truncate">
-                              → {a.stageName}
+                              → {dealStageLabel(a.stageName)}
                             </span>
                           )}
                           {a.clientName && (

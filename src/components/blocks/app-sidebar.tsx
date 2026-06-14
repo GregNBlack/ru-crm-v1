@@ -150,7 +150,7 @@ export function AppSidebar({ session }: { session: AuthSession }) {
                 }`}
               >
                 <CircleUserRound size={24} className="mr-3 ml-1" />
-                <span className="text-sm">Эккаунт</span>
+                <span className="text-sm">Организация</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

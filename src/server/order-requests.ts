@@ -296,6 +296,13 @@ export async function createAndParseOrderRequest(
     const gatewayId = getGatewayId(input.modelKey ?? DEFAULT_MODEL_KEY)
     const { output } = await generateText({
       model: gatewayId,
+      // Deterministic split: the same client message must yield the same
+      // search terms every run. At the provider default temperature the model
+      // drifts the term bag (adds/drops generic kind-words like "wine", varies
+      // a brand's transliteration "Descombe"/"Descombes"), and because those
+      // tokens reshape the ranked catalog, the wizard showed "very different
+      // results" for an identical request. temperature 0 removes that drift.
+      temperature: 0,
       output: Output.object({ schema: llmParseSchema }),
       system:
         "You are a precise order-intake assistant for a wine & spirits " +

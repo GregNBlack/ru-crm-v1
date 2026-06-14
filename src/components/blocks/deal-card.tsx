@@ -23,6 +23,7 @@ import type {
   DealFunnelStageOption,
 } from "@/app/api/deals/route"
 import DealEditDialog from "@/components/forms/form-deal-edit"
+import { dealStageLabel } from "@/lib/deal-funnel"
 
 // Stage-name-keyed colour map for the seeded system funnel. Customised
 // org stages fall through to the neutral default — if persistent colours
@@ -140,9 +141,8 @@ export function DealCard({
           toast.error(err.error || "Не удалось переместить сделку")
           return
         }
-        const stageName =
-          stages.find((s) => s.id === nextStageId)?.name ?? "этап"
-        toast.success(`Перемещено: ${stageName}`)
+        const stageName = stages.find((s) => s.id === nextStageId)?.name
+        toast.success(`Перемещено: ${stageName ? dealStageLabel(stageName) : "этап"}`)
         onChanged()
       } catch {
         toast.error("Не удалось переместить сделку")
@@ -161,7 +161,7 @@ export function DealCard({
           <CardTitle className="truncate">{deal.name}</CardTitle>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Badge className={stageClass} variant="secondary">
-              {deal.funnelStageName}
+              {dealStageLabel(deal.funnelStageName)}
             </Badge>
             {deal.status === "cancelled" && (
               <Badge
@@ -231,7 +231,7 @@ export function DealCard({
             <SelectContent>
               {stages.map((s) => (
                 <SelectItem key={s.id} value={s.id}>
-                  {s.name}{" "}
+                  {dealStageLabel(s.name)}{" "}
                   <span className="text-muted-foreground">
                     ({Math.round(s.closureProbability * 100)}%)
                   </span>

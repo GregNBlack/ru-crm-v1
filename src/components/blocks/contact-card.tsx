@@ -75,7 +75,7 @@ export function ContactCard({
           }
         />
       </CardHeader>
-      <CardContent className="flex-1 space-y-1 text-sm text-muted-foreground">
+      <CardContent className="flex flex-1 flex-col space-y-1 text-sm text-muted-foreground">
         {contact.email && (
           <div className="flex items-center gap-2 truncate">
             <Mail className="h-3.5 w-3.5 shrink-0" />
@@ -100,8 +100,11 @@ export function ContactCard({
             <span className="truncate">{contact.clientName}</span>
           </div>
         )}
+        {/* Spacer pins the creator line to the bottom of the card so it stays
+            aligned across cards of different content height. */}
+        <div className="flex-1" aria-hidden />
         {contact.userName && (
-          <div className="text-xs pt-1">Создал {contact.userName}</div>
+          <div className="text-xs pt-1">Кто создал: {contact.userName}</div>
         )}
       </CardContent>
     </Card>

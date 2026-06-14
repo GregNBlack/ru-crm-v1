@@ -535,7 +535,15 @@ export default function ProductsPage() {
       if (filters.awards) params.set("awards", filters.awards)
       if (filters.priceMin) params.set("priceMin", filters.priceMin)
       if (filters.priceMax) params.set("priceMax", filters.priceMax)
-      if (filters.inStock !== ALL) params.set("inStock", filters.inStock)
+      // The order builder's "only products in stock" guard constrains the
+      // catalog to in-stock rows at the QUERY level — find by relevance (terms
+      // / q / filters all still apply), then drop anything not on stock. It
+      // overrides the manual "In stock" dropdown while active, and works in
+      // both manual and AI-assisted (request wizard) flows since both share
+      // this `load`. Previously `stockOnly` only disabled the per-row Add
+      // button, so out-of-stock rows still cluttered the list.
+      if (builder.stockOnly) params.set("inStock", "in")
+      else if (filters.inStock !== ALL) params.set("inStock", filters.inStock)
       // Rank the catalog by the current item's bilingual search tokens, but
       // only while the box still shows the auto-filled phrase — once the rep
       // takes over the box (hard `q` above), the wizard ranking steps aside.
@@ -551,7 +559,7 @@ export default function ProductsPage() {
     } finally {
       if (reqId === reqIdRef.current) setLoading(false)
     }
-  }, [page, pageSize, filters, wizard, wizardSearch])
+  }, [page, pageSize, filters, wizard, wizardSearch, builder.stockOnly])
 
   useEffect(() => {
     load()
@@ -562,6 +570,12 @@ export default function ProductsPage() {
   useEffect(() => {
     if (!builder.isActive && wizard) setWizard(null)
   }, [builder.isActive, wizard])
+
+  // Toggling the "only products in stock" guard changes the result set size —
+  // reset to page 1 so a shrink can't strand the user on a now-empty high page.
+  useEffect(() => {
+    setPage(1)
+  }, [builder.stockOnly])
 
   // Once the wizard is gone, clear the auto-filled search phrase so it doesn't
   // linger as a stray hard `q` filter over the plain catalog.

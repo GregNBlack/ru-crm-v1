@@ -9,6 +9,7 @@ import {
   ChevronRight,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { dealStageLabel } from "@/lib/deal-funnel"
 
 // Renders the output of the `findClients` / `findContacts` / `findDeals`
 // chat tools as a list of small, clickable entity-info cards. Clicking a
@@ -121,7 +122,7 @@ function describe(
   }
   const d = match as DealMatch
   const subtitle = [
-    d.funnelStageName,
+    d.funnelStageName ? dealStageLabel(d.funnelStageName) : null,
     d.clientName ? `клиент ${d.clientName}` : null,
     d.value ? `${d.value} ${d.currency ?? ""}`.trim() : null,
   ].filter((s): s is string => !!s && s.trim().length > 0)
