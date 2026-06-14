@@ -145,8 +145,9 @@ export function CardsFeedSection() {
   const [search, setSearch] = useState("")
   const [priority, setPriority] = useState<string>(ALL)
   const [category, setCategory] = useState<string>(ALL)
-  const [from, setFrom] = useState("")
-  const [to, setTo] = useState("")
+  // Default view is scoped to the last day; the "Все время" preset clears it.
+  const [from, setFrom] = useState<string>(() => isoDateNDaysAgo(1))
+  const [to, setTo] = useState<string>(() => todayIso())
   // Accepted cards stay visible (they're a record of approved actions).
   // This toggle only controls visibility of *rejected* cards, which are
   // hidden by default since they were dismissed.
@@ -211,20 +212,23 @@ export function CardsFeedSection() {
     [paged.pageItems, load],
   )
 
+  // The default date range is the last day; any deviation counts as a filter.
+  const isDefaultDateRange =
+    from === isoDateNDaysAgo(1) && to === todayIso()
+
   const hasFilters =
     search.trim() !== "" ||
     priority !== ALL ||
     category !== ALL ||
-    from !== "" ||
-    to !== "" ||
+    !isDefaultDateRange ||
     includeRejected
 
   const clearFilters = () => {
     setSearch("")
     setPriority(ALL)
     setCategory(ALL)
-    setFrom("")
-    setTo("")
+    setFrom(isoDateNDaysAgo(1))
+    setTo(todayIso())
     setIncludeRejected(false)
   }
 
@@ -334,6 +338,18 @@ export function CardsFeedSection() {
               }}
             >
               За неделю
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => {
+                setFrom("")
+                setTo("")
+              }}
+            >
+              Все время
             </Button>
           </div>
           <div className="flex items-center gap-2">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useEffect } from "react"
+import { useState, useTransition, useEffect, useCallback } from "react"
 import { useForm } from "react-hook-form"
 import {
   Dialog,
@@ -89,6 +89,11 @@ type Props = {
   task?: TaskRow
   trigger: React.ReactNode
   onSuccess?: () => void
+  // Create-mode-only prefill (ignored in edit mode, where `task` wins).
+  // Used e.g. by the dashboard cards "Принять" → "create task from card" flow.
+  // Pass a stable reference (memoize in the parent) so the open-effect's
+  // form.reset doesn't re-run and wipe edits while the dialog is open.
+  initialValues?: Partial<TaskFormData>
 }
 
 export default function TaskEditDialog({
@@ -96,6 +101,7 @@ export default function TaskEditDialog({
   task,
   trigger,
   onSuccess,
+  initialValues,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -103,35 +109,33 @@ export default function TaskEditDialog({
   const [clientOptions, setClientOptions] = useState<TaskClientOption[]>([])
   const [contactOptions, setContactOptions] = useState<TaskContactOption[]>([])
 
-  const form = useForm<TaskFormData>({
-    defaultValues: {
-      name: task?.name ?? "",
-      description: task?.description ?? "",
-      type: task?.type ?? "other",
-      priority: task?.priority ?? "medium",
-      status: task?.status ?? "todo",
-      assigneeId: task?.assigneeId ?? "",
-      clientId: task?.clientId ?? NO_CLIENT,
-      contactId: task?.contactId ?? NO_CONTACT,
-      dueDate: toDateInput(task?.dueDate),
-    },
-  })
+  // Defaults resolve edit-mode `task` first, then create-mode `initialValues`,
+  // then hardcoded fallbacks — so a prefilled create (e.g. from a card) seeds
+  // the form while edit mode is unaffected.
+  const buildDefaults = useCallback(
+    (): TaskFormData => ({
+      name: task?.name ?? initialValues?.name ?? "",
+      description: task?.description ?? initialValues?.description ?? "",
+      type: task?.type ?? initialValues?.type ?? "other",
+      priority: task?.priority ?? initialValues?.priority ?? "medium",
+      status: task?.status ?? initialValues?.status ?? "todo",
+      assigneeId: task?.assigneeId ?? initialValues?.assigneeId ?? "",
+      clientId: task?.clientId ?? initialValues?.clientId ?? NO_CLIENT,
+      contactId: task?.contactId ?? initialValues?.contactId ?? NO_CONTACT,
+      dueDate: task?.dueDate
+        ? toDateInput(task.dueDate)
+        : initialValues?.dueDate ?? toDateInput(undefined),
+    }),
+    [task, initialValues],
+  )
+
+  const form = useForm<TaskFormData>({ defaultValues: buildDefaults() })
 
   const watchedClientId = form.watch("clientId")
 
   useEffect(() => {
     if (!open) return
-    form.reset({
-      name: task?.name ?? "",
-      description: task?.description ?? "",
-      type: task?.type ?? "other",
-      priority: task?.priority ?? "medium",
-      status: task?.status ?? "todo",
-      assigneeId: task?.assigneeId ?? "",
-      clientId: task?.clientId ?? NO_CLIENT,
-      contactId: task?.contactId ?? NO_CONTACT,
-      dueDate: toDateInput(task?.dueDate),
-    })
+    form.reset(buildDefaults())
 
     let cancelled = false
     ;(async () => {
@@ -153,7 +157,7 @@ export default function TaskEditDialog({
     return () => {
       cancelled = true
     }
-  }, [open, task, form, mode])
+  }, [open, task, form, mode, buildDefaults])
 
   useEffect(() => {
     if (!open) return

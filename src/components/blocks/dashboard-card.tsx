@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -30,8 +30,14 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import TaskEditDialog from "@/components/forms/form-task-edit"
 import type { CardRow } from "@/app/api/cards/route"
-import type { CardCategory, CardPriority } from "@/db/schema"
+import type {
+  CardCategory,
+  CardPriority,
+  TaskPriority,
+  TaskStatus,
+} from "@/db/schema"
 
 const PRIORITY_LABEL: Record<CardPriority, string> = {
   normal: "Обычный",
@@ -193,6 +199,22 @@ export function DashboardCard({
   const analysis = card.message?.analysis ?? ""
   const recommendation = card.message?.recommendation ?? ""
 
+  // Accepting a card spawns a task prefilled from it: name = category label,
+  // description = recommendation, priority high→high / normal→medium, status
+  // "to do", due today. Assignee defaults to the current user (the task
+  // dialog seeds it from the first org member); client/contact stay empty
+  // since cards don't resolve those yet. Memoized so the dialog's reset
+  // effect keeps a stable reference.
+  const taskInitialValues = useMemo(
+    () => ({
+      name: CATEGORY_LABEL[card.category],
+      description: recommendation,
+      priority: (card.priority === "high" ? "high" : "medium") as TaskPriority,
+      status: "todo" as TaskStatus,
+    }),
+    [card.category, card.priority, recommendation],
+  )
+
   return (
     <Card
       className={cn(
@@ -331,15 +353,20 @@ export function DashboardCard({
             )}
             {!resolved && (
             <div className="flex gap-2">
-            <Button
-              size="sm"
-              className="flex-1"
-              onClick={handleAccept}
-              disabled={isPending}
-            >
-              <Check className="h-4 w-4 mr-1" />
-              Принять
-            </Button>
+            {/* "Принять" opens the New Task dialog prefilled from this card.
+                The card is marked accepted only once the task is actually
+                created (onSuccess → handleAccept); cancelling leaves it open. */}
+            <TaskEditDialog
+              mode="create"
+              initialValues={taskInitialValues}
+              onSuccess={handleAccept}
+              trigger={
+                <Button size="sm" className="flex-1" disabled={isPending}>
+                  <Check className="h-4 w-4 mr-1" />
+                  Принять
+                </Button>
+              }
+            />
             <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
               <DialogTrigger asChild>
                 <Button
