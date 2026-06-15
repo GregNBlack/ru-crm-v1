@@ -225,7 +225,7 @@ export async function ingestTelegramUpdate(
       ctx.botToken,
       result.chatId,
       result.inserted
-        ? "✅ Received — added to your Truffalo sources for processing."
+        ? "✅ Received — added to your business OS sources for processing."
         : "✅ Already received — thanks.",
     )
   } catch (err) {
