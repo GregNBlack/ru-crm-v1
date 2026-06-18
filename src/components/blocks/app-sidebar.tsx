@@ -94,15 +94,15 @@ export function AppSidebar({ session }: { session: AuthSession }) {
         <SidebarHeader>
           {open ? (
             <div className="flex flex-row gap-3 items-center justify-between">
-              <div className="flex flex-row gap-3 items-center">
+              <div className="flex flex-row gap-3 items-center min-w-0">
                 <Image
                   src="/logo.png"
                   alt="Logo"
                   width={28}
                   height={28}
-                  className="mt-1 rounded-full"
+                  className="mt-1 rounded-full shrink-0"
                 />
-                <h1 className="text-lg font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
+                <h1 className="text-lg font-bold whitespace-nowrap bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
                   business OS
                 </h1>
               </div>
