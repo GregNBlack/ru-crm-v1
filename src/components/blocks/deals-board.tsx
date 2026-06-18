@@ -226,7 +226,10 @@ export function DealsBoard({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex flex-col gap-3 p-4">
+      {/* Обёртка центрирует доску и сжимается по ширине колонок; шапка
+          (растягивается по ширине этой обёртки) получает ту же ширину. */}
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-fit flex-col">
+        <div className="flex flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-baseline gap-4 flex-wrap">
             <h1 className="text-lg font-semibold uppercase tracking-wide">
@@ -369,7 +372,8 @@ export function DealsBoard({
         <DragOverlay>
           {activeDeal ? <DealKanbanCardOverlay deal={activeDeal} /> : null}
         </DragOverlay>
-      </DndContext>
+        </DndContext>
+      </div>
 
       <DealMoveDialog
         move={pendingMove}
