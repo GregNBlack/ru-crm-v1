@@ -215,6 +215,7 @@ export function DealsBoard({
       </div>
 
       <DndContext
+        id="deals-board"
         sensors={sensors}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
