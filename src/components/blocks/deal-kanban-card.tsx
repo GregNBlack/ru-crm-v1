@@ -2,6 +2,7 @@
 
 import { useDraggable } from "@dnd-kit/core"
 import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Building2, User, Pencil } from "lucide-react"
 import type { DealRow } from "@/app/api/deals/route"
@@ -9,8 +10,7 @@ import DealEditDialog from "@/components/forms/form-deal-edit"
 import { DealProvenance } from "@/components/blocks/deal-provenance"
 import { formatAmount } from "@/lib/deal-board"
 
-// Сумма + клиент + владелец — общий блок для интерактивной карточки и для
-// превью в DragOverlay (чтобы превью визуально совпадало с реальной карточкой).
+// Сумма + клиент + владелец — общий блок для карточки и превью DragOverlay.
 function CardMeta({ deal }: { deal: DealRow }) {
   const amount = formatAmount(deal.value, deal.currency)
   return (
@@ -41,8 +41,12 @@ export function DealKanbanCard({
   deal: DealRow
   onChanged: () => void
 }) {
+  // Неактивные (отменённые/удалённые) сделки показываем приглушённо и НЕ даём
+  // перетаскивать — перевод стадии только для активных.
+  const isActive = deal.status === "active"
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
+    disabled: !isActive,
   })
 
   return (
@@ -50,9 +54,9 @@ export function DealKanbanCard({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={`p-3 space-y-2 bg-card cursor-grab active:cursor-grabbing border-muted ${
-        isDragging ? "opacity-40" : ""
-      }`}
+      className={`p-3 space-y-2 bg-card border-muted ${
+        isActive ? "cursor-grab active:cursor-grabbing" : "opacity-60"
+      } ${isDragging ? "opacity-40" : ""}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="text-sm font-medium leading-snug">{deal.name}</div>
@@ -74,6 +78,23 @@ export function DealKanbanCard({
         />
       </div>
 
+      {deal.status === "cancelled" && (
+        <Badge
+          variant="secondary"
+          className="bg-zinc-500/15 text-zinc-600 dark:text-zinc-300"
+        >
+          Отменена
+        </Badge>
+      )}
+      {deal.status === "deleted" && (
+        <Badge
+          variant="secondary"
+          className="bg-red-500/15 text-red-600 dark:text-red-300"
+        >
+          Удалена
+        </Badge>
+      )}
+
       <CardMeta deal={deal} />
 
       <div className="flex flex-wrap gap-1">
@@ -83,9 +104,7 @@ export function DealKanbanCard({
   )
 }
 
-// Превью карточки, следующее за курсором во время перетаскивания (DragOverlay).
-// Без интерактивных элементов; приподнято тенью и лёгким наклоном, чтобы было
-// видно, что «плашка» физически перетаскивается.
+// Превью карточки под курсором при перетаскивании (DragOverlay).
 export function DealKanbanCardOverlay({ deal }: { deal: DealRow }) {
   return (
     <Card className="w-64 p-3 space-y-2 bg-card border-muted shadow-xl rotate-2 cursor-grabbing">
