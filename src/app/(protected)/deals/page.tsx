@@ -1,11 +1,16 @@
-import { listDeals, listDealFunnelStages } from "@/server/deals"
+import {
+  listDeals,
+  listDealFunnelStages,
+  listDealClientOptions,
+} from "@/server/deals"
 import { getServerSession } from "@/lib/get-session"
 import { DealsBoard } from "@/components/blocks/deals-board"
 
 export default async function DealsPage() {
-  const [deals, stages, session] = await Promise.all([
-    listDeals({ includeCancelled: false, includeDeleted: false }),
+  const [deals, stages, clientOptions, session] = await Promise.all([
+    listDeals({ includeCancelled: true, includeDeleted: true }),
     listDealFunnelStages(),
+    listDealClientOptions(),
     getServerSession(),
   ])
   const currentUserId = session?.user.id ?? ""
@@ -16,6 +21,7 @@ export default async function DealsPage() {
         deals={deals}
         stages={stages}
         currentUserId={currentUserId}
+        clientOptions={clientOptions}
       />
     </div>
   )
