@@ -183,16 +183,18 @@ export function DealsBoard({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-4 p-4 flex-wrap">
-        <h1 className="text-lg font-semibold uppercase tracking-wide">
-          Сделки
-        </h1>
-        <span className="text-sm text-muted-foreground">
-          взвешенный прогноз{" "}
-          <b className="text-foreground">{formatAggregate(forecast)}</b> ·
-          открытых: <b className="text-foreground">{openCount}</b>
-        </span>
-        <div className="ml-auto flex rounded-lg border overflow-hidden">
+      <div className="flex flex-col gap-2 p-4">
+        <div className="flex items-baseline gap-4 flex-wrap">
+          <h1 className="text-lg font-semibold uppercase tracking-wide">
+            Сделки
+          </h1>
+          <span className="text-sm text-muted-foreground">
+            взвешенный прогноз{" "}
+            <b className="text-foreground">{formatAggregate(forecast)}</b> ·
+            открытых: <b className="text-foreground">{openCount}</b>
+          </span>
+        </div>
+        <div className="flex w-fit rounded-lg border overflow-hidden">
           <Button
             variant={filter === "all" ? "secondary" : "ghost"}
             size="sm"

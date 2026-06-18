@@ -22,6 +22,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -92,26 +93,37 @@ export function AppSidebar({ session }: { session: AuthSession }) {
       <SidebarContent className="flex-1">
         <SidebarHeader>
           {open ? (
-            <div className="flex flex-row gap-3 items-center justify-center">
+            <div className="flex flex-row gap-3 items-center justify-between">
+              <div className="flex flex-row gap-3 items-center">
+                <Image
+                  src="/logo.png"
+                  alt="Logo"
+                  width={28}
+                  height={28}
+                  className="mt-1 rounded-full"
+                />
+                <h1 className="text-lg font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
+                  business OS
+                </h1>
+              </div>
+              <SidebarTrigger aria-label="Свернуть меню" />
+            </div>
+          ) : (
+            // Свёрнутое состояние: логотип, а при наведении на него проявляется
+            // кнопка разворота меню (логотип уходит в прозрачность).
+            <div className="group relative flex items-center justify-center">
               <Image
                 src="/logo.png"
                 alt="Logo"
-                width={28}
-                height={28}
-                className="mt-1 rounded-full"
+                width={40}
+                height={40}
+                className="mt-1 rounded-full transition-opacity group-hover:opacity-0"
               />
-              <h1 className="text-lg font-bold bg-linear-to-r from-orange-500 via-pink-500 to-blue-400 bg-clip-text text-transparent">
-                business OS
-              </h1>
+              <SidebarTrigger
+                aria-label="Развернуть меню"
+                className="absolute opacity-0 transition-opacity group-hover:opacity-100"
+              />
             </div>
-          ) : (
-            <Image
-              src="/logo.png"
-              alt="Logo"
-              width={40}
-              height={40}
-              className="mt-1 rounded-full"
-            />
           )}
         </SidebarHeader>
 
