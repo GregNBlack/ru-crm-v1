@@ -7,6 +7,7 @@ import {
   createDeal,
   updateDeal,
   setDealStatus,
+  moveDealStage,
   getDeal,
 } from "@/server/deals"
 import { dealStatus, type DealStatus } from "@/db/schema"
@@ -123,6 +124,17 @@ export async function PUT(request: NextRequest) {
     } = body
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+    // Перевод стадии из канбана: ставит funnelStageId + заметку-основание.
+    if (body.move) {
+      if (!funnelStageId) {
+        return NextResponse.json(
+          { error: "funnelStageId is required" },
+          { status: 400 },
+        )
+      }
+      await moveDealStage(id, funnelStageId, body.note ?? null)
+      return NextResponse.json({ success: true })
     }
     const isValidStatus = (s: unknown): s is DealStatus =>
       typeof s === "string" &&

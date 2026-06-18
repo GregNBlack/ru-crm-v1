@@ -517,3 +517,25 @@ export async function setDealStatus(dealId: string, status: DealStatus) {
   await db.update(deal).set({ status }).where(eq(deal.id, dealId))
 }
 
+// Перевод сделки по воронке вручную (drag&drop в канбане). Ставит стадию,
+// пишет заметку-основание в `changes` (provenance ручного перевода).
+// `reasoning` не трогаем — оно за discovery-агентом.
+export async function moveDealStage(
+  dealId: string,
+  funnelStageId: string,
+  note: string | null,
+) {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  await assertFunnelStageAccessible(funnelStageId, activeOrgId)
+
+  const trimmed = note?.trim()
+  // Всегда переписываем `changes` (заметка или null), чтобы при переводе без
+  // заметки в provenance не оставался устаревший текст прошлого изменения.
+  // `updatedAt` обновляется автоматически через $onUpdate в схеме.
+  await db
+    .update(deal)
+    .set({ funnelStageId, changes: trimmed || null })
+    .where(eq(deal.id, dealId))
+}
+
