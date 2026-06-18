@@ -13,8 +13,22 @@ import {
   useSensors,
 } from "@dnd-kit/core"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Plus, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import type { DealRow, DealFunnelStageOption } from "@/app/api/deals/route"
+import type {
+  DealRow,
+  DealFunnelStageOption,
+  DealClientOption,
+} from "@/app/api/deals/route"
 import { dealStageLabel } from "@/lib/deal-funnel"
 import {
   STAGE_COLOR,
@@ -35,6 +49,10 @@ import {
   DealMoveDialog,
   type PendingMove,
 } from "@/components/blocks/deal-move-dialog"
+import DealEditDialog from "@/components/forms/form-deal-edit"
+import { DiscoverDealsDialog } from "@/components/blocks/discover-deals-dialog"
+
+const ALL = "__all__"
 
 function Column({
   stage,
@@ -82,13 +100,19 @@ export function DealsBoard({
   deals,
   stages,
   currentUserId,
+  clientOptions = [],
 }: {
   deals: DealRow[]
   stages: DealFunnelStageOption[]
   currentUserId: string
+  clientOptions?: DealClientOption[]
 }) {
   const router = useRouter()
   const [filter, setFilter] = useState<OwnerFilter>("all")
+  const [query, setQuery] = useState("")
+  const [clientFilter, setClientFilter] = useState<string>(ALL)
+  const [includeCancelled, setIncludeCancelled] = useState(false)
+  const [includeDeleted, setIncludeDeleted] = useState(false)
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -97,29 +121,48 @@ export function DealsBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   )
 
-  const visible = useMemo(
-    () => filterByOwner(deals, filter, currentUserId),
-    [deals, filter, currentUserId],
-  )
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return filterByOwner(deals, filter, currentUserId).filter((d) => {
+      if (clientFilter !== ALL && d.clientId !== clientFilter) return false
+      if (q) {
+        const inName = d.name.toLowerCase().includes(q)
+        const inDesc = (d.description ?? "").toLowerCase().includes(q)
+        if (!inName && !inDesc) return false
+      }
+      return true
+    })
+  }, [deals, filter, currentUserId, query, clientFilter])
 
   const activeDeals = useMemo(
-    () => visible.filter((d) => d.status === "active"),
-    [visible],
+    () => filtered.filter((d) => d.status === "active"),
+    [filtered],
+  )
+
+  const boardDeals = useMemo(
+    () =>
+      filtered.filter((d) => {
+        if (d.status === "active") return true
+        if (d.status === "cancelled") return includeCancelled
+        if (d.status === "deleted") return includeDeleted
+        return false
+      }),
+    [filtered, includeCancelled, includeDeleted],
   )
 
   const flowStages = stages.filter((s) => !isTerminalStage(s.name))
   const terminalStages = stages.filter((s) => isTerminalStage(s.name))
 
   const forecast = useMemo(
-    () => weightedForecast(visible, stages),
-    [visible, stages],
+    () => weightedForecast(activeDeals, stages),
+    [activeDeals, stages],
   )
   const openCount = activeDeals.filter(
     (d) => !isTerminalStage(d.funnelStageName),
   ).length
 
   const dealsByStage = (stageId: string) =>
-    activeDeals.filter((d) => d.funnelStageId === stageId)
+    boardDeals.filter((d) => d.funnelStageId === stageId)
 
   const activeDeal = activeId
     ? (activeDeals.find((d) => d.id === activeId) ?? null)
@@ -183,34 +226,93 @@ export function DealsBoard({
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex flex-col gap-2 p-4">
-        <div className="flex items-baseline gap-4 flex-wrap">
-          <h1 className="text-lg font-semibold uppercase tracking-wide">
-            Сделки
-          </h1>
-          <span className="text-sm text-muted-foreground">
-            взвешенный прогноз{" "}
-            <b className="text-foreground">{formatAggregate(forecast)}</b> ·
-            открытых: <b className="text-foreground">{openCount}</b>
-          </span>
+      <div className="flex flex-col gap-3 p-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-baseline gap-4 flex-wrap">
+            <h1 className="text-lg font-semibold uppercase tracking-wide">
+              Сделки
+            </h1>
+            <span className="text-sm text-muted-foreground">
+              взвешенный прогноз{" "}
+              <b className="text-foreground">{formatAggregate(forecast)}</b> ·
+              открытых: <b className="text-foreground">{openCount}</b>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <DiscoverDealsDialog
+              onDealsGenerated={router.refresh}
+              trigger={
+                <Button size="sm" variant="default">
+                  <Sparkles className="h-4 w-4 mr-1" />
+                  Найти в источниках
+                </Button>
+              }
+            />
+            <DealEditDialog
+              mode="create"
+              onSuccess={router.refresh}
+              trigger={
+                <Button size="sm">
+                  <Plus className="h-4 w-4 mr-1" />
+                  Новая сделка
+                </Button>
+              }
+            />
+          </div>
         </div>
-        <div className="flex w-fit rounded-lg border overflow-hidden">
-          <Button
-            variant={filter === "all" ? "secondary" : "ghost"}
-            size="sm"
-            className="rounded-none"
-            onClick={() => setFilter("all")}
-          >
-            Все
-          </Button>
-          <Button
-            variant={filter === "mine" ? "secondary" : "ghost"}
-            size="sm"
-            className="rounded-none"
-            onClick={() => setFilter("mine")}
-          >
-            Мои
-          </Button>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-lg border overflow-hidden">
+            <Button
+              variant={filter === "all" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-none"
+              onClick={() => setFilter("all")}
+            >
+              Все
+            </Button>
+            <Button
+              variant={filter === "mine" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-none"
+              onClick={() => setFilter("mine")}
+            >
+              Мои
+            </Button>
+          </div>
+          <Input
+            placeholder="Поиск по названию или описанию…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="flex-1 min-w-45"
+          />
+          <Select value={clientFilter} onValueChange={setClientFilter}>
+            <SelectTrigger className="w-fit">
+              <SelectValue placeholder="Клиент" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Все клиенты</SelectItem>
+              {clientOptions.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox
+              checked={includeCancelled}
+              onCheckedChange={(v) => setIncludeCancelled(Boolean(v))}
+            />
+            Отменённые
+          </label>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox
+              checked={includeDeleted}
+              onCheckedChange={(v) => setIncludeDeleted(Boolean(v))}
+            />
+            Удалённые
+          </label>
         </div>
       </div>
 
