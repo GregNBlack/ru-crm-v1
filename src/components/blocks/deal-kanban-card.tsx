@@ -4,18 +4,16 @@ import { useDraggable } from "@dnd-kit/core"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Building2, User, Pencil } from "lucide-react"
-import type { DealRow, DealFunnelStageOption } from "@/app/api/deals/route"
+import type { DealRow } from "@/app/api/deals/route"
 import DealEditDialog from "@/components/forms/form-deal-edit"
 import { DealProvenance } from "@/components/blocks/deal-provenance"
 import { formatAmount } from "@/lib/deal-board"
 
 export function DealKanbanCard({
   deal,
-  stages,
   onChanged,
 }: {
   deal: DealRow
-  stages: DealFunnelStageOption[]
   onChanged: () => void
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({

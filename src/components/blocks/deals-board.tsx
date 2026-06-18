@@ -34,12 +34,10 @@ import {
 function Column({
   stage,
   deals,
-  stages,
   onChanged,
 }: {
   stage: DealFunnelStageOption
   deals: DealRow[]
-  stages: DealFunnelStageOption[]
   onChanged: () => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
@@ -68,12 +66,7 @@ function Column({
         }`}
       >
         {deals.map((d) => (
-          <DealKanbanCard
-            key={d.id}
-            deal={d}
-            stages={stages}
-            onChanged={onChanged}
-          />
+          <DealKanbanCard key={d.id} deal={d} onChanged={onChanged} />
         ))}
       </div>
     </div>
@@ -211,7 +204,6 @@ export function DealsBoard({
               key={stage.id}
               stage={stage}
               deals={dealsByStage(stage.id)}
-              stages={stages}
               onChanged={router.refresh}
             />
           ))}
