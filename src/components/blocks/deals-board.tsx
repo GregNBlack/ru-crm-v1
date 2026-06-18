@@ -264,32 +264,31 @@ export function DealsBoard({
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border bg-card shadow-sm p-3">
+        <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-card shadow-sm p-3">
+          <div className="flex rounded-lg border overflow-hidden">
+            <Button
+              variant={filter === "all" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-none"
+              onClick={() => setFilter("all")}
+            >
+              Все
+            </Button>
+            <Button
+              variant={filter === "mine" ? "secondary" : "ghost"}
+              size="sm"
+              className="rounded-none"
+              onClick={() => setFilter("mine")}
+            >
+              Мои
+            </Button>
+          </div>
           <Input
             placeholder="Поиск по названию или описанию…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full"
+            className="flex-1 min-w-45"
           />
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex rounded-lg border overflow-hidden">
-              <Button
-                variant={filter === "all" ? "secondary" : "ghost"}
-                size="sm"
-                className="rounded-none"
-                onClick={() => setFilter("all")}
-              >
-                Все
-              </Button>
-              <Button
-                variant={filter === "mine" ? "secondary" : "ghost"}
-                size="sm"
-                className="rounded-none"
-                onClick={() => setFilter("mine")}
-              >
-                Мои
-              </Button>
-            </div>
           <Select value={clientFilter} onValueChange={setClientFilter}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Клиент" />
@@ -317,7 +316,6 @@ export function DealsBoard({
             />
             Удалённые
           </label>
-          </div>
         </div>
       </div>
 
