@@ -10,6 +10,7 @@ import {
   Users,
   ListChecks,
   Package,
+  SquareKanban,
 } from "lucide-react"
 import {
   Sidebar,
@@ -48,6 +49,11 @@ export const items = [
     title: "Клиенты",
     url: "/clients",
     icon: Users,
+  },
+  {
+    title: "Сделки",
+    url: "/deals",
+    icon: SquareKanban,
   },
   {
     title: "Заказы",
