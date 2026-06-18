@@ -225,7 +225,7 @@ export function DealsBoard({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 w-full max-w-7xl mx-auto">
       <div className="flex flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-baseline gap-4 flex-wrap">
@@ -261,8 +261,8 @@ export function DealsBoard({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex rounded-lg border overflow-hidden">
+        <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/40 p-3">
+          <div className="flex rounded-lg border overflow-hidden bg-background">
             <Button
               variant={filter === "all" ? "secondary" : "ghost"}
               size="sm"
@@ -284,10 +284,10 @@ export function DealsBoard({
             placeholder="Поиск по названию или описанию…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 min-w-45"
+            className="w-64 bg-background"
           />
           <Select value={clientFilter} onValueChange={setClientFilter}>
-            <SelectTrigger className="w-fit">
+            <SelectTrigger className="w-fit bg-background">
               <SelectValue placeholder="Клиент" />
             </SelectTrigger>
             <SelectContent>
