@@ -106,7 +106,7 @@ export function AppSidebar({ session }: { session: AuthSession }) {
                   business OS
                 </h1>
               </div>
-              <SidebarTrigger aria-label="Свернуть меню" />
+              <SidebarTrigger aria-label="Свернуть меню" className="cursor-pointer" />
             </div>
           ) : (
             // Свёрнутое состояние: логотип, а при наведении на него проявляется
@@ -121,7 +121,7 @@ export function AppSidebar({ session }: { session: AuthSession }) {
               />
               <SidebarTrigger
                 aria-label="Развернуть меню"
-                className="absolute opacity-0 transition-opacity group-hover:opacity-100"
+                className="absolute cursor-pointer opacity-0 transition-opacity group-hover:opacity-100"
               />
             </div>
           )}
