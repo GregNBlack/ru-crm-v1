@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import {
   DndContext,
   DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
   PointerSensor,
   useDroppable,
   useSensor,
@@ -25,7 +27,10 @@ import {
   weightedForecast,
   type OwnerFilter,
 } from "@/lib/deal-board"
-import { DealKanbanCard } from "@/components/blocks/deal-kanban-card"
+import {
+  DealKanbanCard,
+  DealKanbanCardOverlay,
+} from "@/components/blocks/deal-kanban-card"
 import {
   DealMoveDialog,
   type PendingMove,
@@ -85,6 +90,7 @@ export function DealsBoard({
   const router = useRouter()
   const [filter, setFilter] = useState<OwnerFilter>("all")
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   const sensors = useSensors(
@@ -115,7 +121,16 @@ export function DealsBoard({
   const dealsByStage = (stageId: string) =>
     activeDeals.filter((d) => d.funnelStageId === stageId)
 
+  const activeDeal = activeId
+    ? (activeDeals.find((d) => d.id === activeId) ?? null)
+    : null
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id))
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveId(null)
     const { active, over } = event
     if (!over) return
     const deal = activeDeals.find((d) => d.id === active.id)
@@ -197,7 +212,12 @@ export function DealsBoard({
         </div>
       </div>
 
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setActiveId(null)}
+      >
         <div className="flex-1 min-h-0 flex gap-2 overflow-x-auto px-4 pb-4 items-start">
           {flowStages.map((stage) => (
             <Column
@@ -240,6 +260,10 @@ export function DealsBoard({
             </div>
           )}
         </div>
+
+        <DragOverlay>
+          {activeDeal ? <DealKanbanCardOverlay deal={activeDeal} /> : null}
+        </DragOverlay>
       </DndContext>
 
       <DealMoveDialog
