@@ -261,7 +261,7 @@ export function DealsBoard({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/40 p-3">
+        <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-card shadow-sm p-3">
           <div className="flex rounded-lg border overflow-hidden bg-background">
             <Button
               variant={filter === "all" ? "secondary" : "ghost"}
@@ -299,14 +299,14 @@ export function DealsBoard({
               ))}
             </SelectContent>
           </Select>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer rounded-md border bg-background px-3 py-2">
             <Checkbox
               checked={includeCancelled}
               onCheckedChange={(v) => setIncludeCancelled(Boolean(v))}
             />
             Отменённые
           </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer rounded-md border bg-background px-3 py-2">
             <Checkbox
               checked={includeDeleted}
               onCheckedChange={(v) => setIncludeDeleted(Boolean(v))}
