@@ -57,9 +57,11 @@ export function DealMoveDialog({
               : ""}
           </DialogTitle>
           <DialogDescription>
-            {isBack
-              ? `Обратный перевод ${move?.fromLabel} → ${move?.toLabel}. Укажите основание (обязательно).`
-              : `Перевод ${move?.fromLabel} → ${move?.toLabel}. Комментарий по желанию.`}
+            {move
+              ? isBack
+                ? `Обратный перевод ${move.fromLabel} → ${move.toLabel}. Укажите основание (обязательно).`
+                : `Перевод ${move.fromLabel} → ${move.toLabel}. Комментарий по желанию.`
+              : ""}
           </DialogDescription>
         </DialogHeader>
 
