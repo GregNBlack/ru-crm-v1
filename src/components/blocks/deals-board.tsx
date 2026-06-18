@@ -290,7 +290,7 @@ export function DealsBoard({
             className="w-64"
           />
           <Select value={clientFilter} onValueChange={setClientFilter}>
-            <SelectTrigger className="w-fit">
+            <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Клиент" />
             </SelectTrigger>
             <SelectContent>
