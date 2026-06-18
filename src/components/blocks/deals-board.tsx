@@ -225,7 +225,7 @@ export function DealsBoard({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0 w-full max-w-7xl mx-auto">
+    <div className="flex flex-col h-full min-h-0">
       <div className="flex flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-baseline gap-4 flex-wrap">
@@ -262,7 +262,7 @@ export function DealsBoard({
         </div>
 
         <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-card shadow-sm p-3">
-          <div className="flex rounded-lg border overflow-hidden bg-background">
+          <div className="flex rounded-lg border overflow-hidden">
             <Button
               variant={filter === "all" ? "secondary" : "ghost"}
               size="sm"
@@ -284,10 +284,10 @@ export function DealsBoard({
             placeholder="Поиск по названию или описанию…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-64 bg-background"
+            className="w-64"
           />
           <Select value={clientFilter} onValueChange={setClientFilter}>
-            <SelectTrigger className="w-fit bg-background">
+            <SelectTrigger className="w-fit">
               <SelectValue placeholder="Клиент" />
             </SelectTrigger>
             <SelectContent>
@@ -299,14 +299,14 @@ export function DealsBoard({
               ))}
             </SelectContent>
           </Select>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer rounded-md border bg-background px-3 py-2">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox
               checked={includeCancelled}
               onCheckedChange={(v) => setIncludeCancelled(Boolean(v))}
             />
             Отменённые
           </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer rounded-md border bg-background px-3 py-2">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox
               checked={includeDeleted}
               onCheckedChange={(v) => setIncludeDeleted(Boolean(v))}
