@@ -125,7 +125,7 @@ export function DealsBoard({
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over) return
-    const deal = deals.find((d) => d.id === active.id)
+    const deal = activeDeals.find((d) => d.id === active.id)
     const toStage = stages.find((s) => s.id === over.id)
     if (!deal || !toStage) return
     if (deal.funnelStageId === toStage.id) return
@@ -212,7 +212,7 @@ export function DealsBoard({
               stage={stage}
               deals={dealsByStage(stage.id)}
               stages={stages}
-              onChanged={() => router.refresh()}
+              onChanged={router.refresh}
             />
           ))}
 
