@@ -245,7 +245,7 @@ export function DealsBoard({
             <DiscoverDealsDialog
               onDealsGenerated={router.refresh}
               trigger={
-                <Button size="sm" variant="default">
+                <Button size="sm" variant="secondary">
                   <Sparkles className="h-4 w-4 mr-1" />
                   Найти в источниках
                 </Button>
