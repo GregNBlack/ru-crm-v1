@@ -24,45 +24,11 @@ import type {
 } from "@/app/api/deals/route"
 import DealEditDialog from "@/components/forms/form-deal-edit"
 import { dealStageLabel } from "@/lib/deal-funnel"
-
-// Stage-name-keyed colour map for the seeded system funnel. Customised
-// org stages fall through to the neutral default — if persistent colours
-// per stage become important later, add a `colour` column on
-// `deal_funnel_stage` and key off that instead.
-const STAGE_COLOR: Record<string, string> = {
-  Qualification: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
-  Discovery: "bg-blue-500/15 text-blue-600 dark:text-blue-300",
-  Pilot: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  Proposal: "bg-orange-500/15 text-orange-600 dark:text-orange-300",
-  Negotiations: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-300",
-  Closed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-  Rejected: "bg-red-500/15 text-red-600 dark:text-red-300",
-}
-const STAGE_DEFAULT = "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300"
-
-const CURRENCY_SYMBOL: Record<string, string> = {
-  RUB: "₽",
-  USD: "$",
-  EUR: "€",
-  GBP: "£",
-  JPY: "¥",
-  CHF: "CHF ",
-  CAD: "CA$",
-  AUD: "A$",
-}
-
-function formatAmount(value: string | null, currency: string): string | null {
-  if (value === null) return null
-  const n = Number(value)
-  if (!Number.isFinite(n)) return null
-  const symbol = CURRENCY_SYMBOL[currency.toUpperCase()] ?? `${currency} `
-  // 0 decimals for whole numbers, up to 2 otherwise — keeps the card tidy.
-  const formatted = n.toLocaleString(undefined, {
-    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
-    maximumFractionDigits: 2,
-  })
-  return `${symbol}${formatted}`
-}
+import {
+  STAGE_COLOR,
+  STAGE_DEFAULT,
+  formatAmount,
+} from "@/lib/deal-board"
 
 // A labeled deal text field (Description / Reason / Changes) shown clamped
 // to 3 lines on the card, with the FULL text revealed in a hover-card on
