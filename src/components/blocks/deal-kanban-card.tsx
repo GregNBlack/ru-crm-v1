@@ -4,33 +4,43 @@ import { useDraggable } from "@dnd-kit/core"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Building2, User, Pencil } from "lucide-react"
+import { Pencil } from "lucide-react"
 import type { DealRow } from "@/app/api/deals/route"
 import DealEditDialog from "@/components/forms/form-deal-edit"
 import { DealProvenance } from "@/components/blocks/deal-provenance"
 import { formatAmount } from "@/lib/deal-board"
 
-// Сумма + клиент + владелец — общий блок для карточки и превью DragOverlay.
-function CardMeta({ deal }: { deal: DealRow }) {
-  const amount = formatAmount(deal.value, deal.currency)
+// Заголовок: компания (клиент) сверху, продукт/проект (название сделки) — строкой
+// ниже. Если клиент не привязан, название сделки само становится заголовком.
+function DealTitle({ deal }: { deal: DealRow }) {
+  const company = deal.clientName ?? deal.name
+  const product = deal.clientName ? deal.name : null
   return (
-    <>
-      {amount && <div className="text-sm font-semibold">{amount}</div>}
-      <div className="space-y-1 text-xs text-muted-foreground">
-        {deal.clientName && (
-          <div className="flex items-center gap-1.5 truncate">
-            <Building2 className="h-3 w-3 shrink-0" />
-            <span className="truncate">{deal.clientName}</span>
-          </div>
-        )}
-        {deal.userName && (
-          <div className="flex items-center gap-1.5 truncate">
-            <User className="h-3 w-3 shrink-0" />
-            <span className="truncate">{deal.userName}</span>
-          </div>
-        )}
-      </div>
-    </>
+    <div className="min-w-0">
+      <div className="text-sm font-medium leading-snug truncate">{company}</div>
+      {product && (
+        <div className="text-xs text-muted-foreground leading-snug truncate">
+          {product}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Сумма · ответственный — одной строкой.
+function DealMetaLine({ deal }: { deal: DealRow }) {
+  const amount = formatAmount(deal.value, deal.currency)
+  if (!amount && !deal.userName) return null
+  return (
+    <div className="text-sm">
+      {amount && <span className="font-semibold">{amount}</span>}
+      {amount && deal.userName && (
+        <span className="text-muted-foreground"> · </span>
+      )}
+      {deal.userName && (
+        <span className="text-muted-foreground">{deal.userName}</span>
+      )}
+    </div>
   )
 }
 
@@ -59,7 +69,7 @@ export function DealKanbanCard({
       } ${isDragging ? "opacity-40" : ""}`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="text-sm font-medium leading-snug">{deal.name}</div>
+        <DealTitle deal={deal} />
         <DealEditDialog
           mode="edit"
           deal={deal}
@@ -95,7 +105,7 @@ export function DealKanbanCard({
         </Badge>
       )}
 
-      <CardMeta deal={deal} />
+      <DealMetaLine deal={deal} />
 
       <div className="flex flex-wrap gap-1">
         <DealProvenance deal={deal} />
@@ -108,8 +118,8 @@ export function DealKanbanCard({
 export function DealKanbanCardOverlay({ deal }: { deal: DealRow }) {
   return (
     <Card className="w-64 p-3 space-y-2 bg-card border-muted shadow-xl rotate-2 cursor-grabbing">
-      <div className="text-sm font-medium leading-snug">{deal.name}</div>
-      <CardMeta deal={deal} />
+      <DealTitle deal={deal} />
+      <DealMetaLine deal={deal} />
     </Card>
   )
 }
