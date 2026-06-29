@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import {
   DndContext,
@@ -118,7 +118,13 @@ export function DealsBoard({
   const [includeDeleted, setIncludeDeleted] = useState(false)
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [openDeal, setOpenDeal] = useState<DealRow | null>(null)
+  // Храним id открытой сделки, а объект выводим из живого `deals` — drawer
+  // всегда показывает актуальные данные после refresh (редактирование, перевод
+  // стадии с другой карточки и т.п.), без устаревшего снимка.
+  const [openDealId, setOpenDealId] = useState<string | null>(null)
+  // Гасим клик-после-перетаскивания: dnd-kit может породить синтетический click
+  // после короткого drag — не открываем drawer в этом случае.
+  const justDraggedRef = useRef(false)
   const [isPending, startTransition] = useTransition()
 
   const sensors = useSensors(
@@ -172,12 +178,21 @@ export function DealsBoard({
     ? (activeDeals.find((d) => d.id === activeId) ?? null)
     : null
 
+  const openDeal = openDealId
+    ? (deals.find((d) => d.id === openDealId) ?? null)
+    : null
+
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveId(null)
+    // Был drag — подавляем возможный последующий click по карточке.
+    justDraggedRef.current = true
+    setTimeout(() => {
+      justDraggedRef.current = false
+    }, 0)
     const { active, over } = event
     if (!over) return
     const deal = activeDeals.find((d) => d.id === active.id)
@@ -337,7 +352,10 @@ export function DealsBoard({
               stage={stage}
               deals={dealsByStage(stage.id)}
               onChanged={router.refresh}
-              onOpen={setOpenDeal}
+              onOpen={(d) => {
+                if (justDraggedRef.current) return
+                setOpenDealId(d.id)
+              }}
             />
           ))}
 
@@ -391,7 +409,7 @@ export function DealsBoard({
         stages={stages}
         open={openDeal !== null}
         onOpenChange={(o) => {
-          if (!o) setOpenDeal(null)
+          if (!o) setOpenDealId(null)
         }}
         onChanged={() => router.refresh()}
       />

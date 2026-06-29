@@ -46,38 +46,36 @@ export function DealDetailDrawer({
   onOpenChange: (open: boolean) => void
   onChanged: () => void
 }) {
-  // Локальная стадия — чтобы шапка/селект обновлялись сразу после перевода,
-  // не дожидаясь обновления пропа из доски.
-  const [stageId, setStageId] = useState<string>(deal?.funnelStageId ?? "")
-  const [tasks, setTasks] = useState<TaskRow[]>([])
+  // Стадию берём прямо из deal.funnelStageId — после перевода onChanged →
+  // router.refresh обновляет проп (deal выводится из живого списка на доске).
+  // Задачи храним вместе с их dealId, чтобы при переключении сделки сразу
+  // показывать пустоту, а не задачи прошлой сделки (без синхронного setState).
+  const [taskData, setTaskData] = useState<{
+    dealId: string
+    items: TaskRow[]
+  } | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  const dealId = deal?.id
   useEffect(() => {
-    setStageId(deal?.funnelStageId ?? "")
-  }, [deal?.id, deal?.funnelStageId])
-
-  // Задачи сделки: тянем все и фильтруем по dealId (отдельного эндпоинта нет).
-  useEffect(() => {
-    if (!open || !deal) return
+    if (!open || !dealId) return
     let cancelled = false
     fetch("/api/tasks")
       .then((r) => r.json())
       .then((data: { tasks?: TaskRow[] }) => {
         if (cancelled) return
-        const all = data.tasks ?? []
-        setTasks(
-          all
-            .filter((t) => t.dealId === deal.id)
-            .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-        )
+        const items = (data.tasks ?? [])
+          .filter((t) => t.dealId === dealId)
+          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+        setTaskData({ dealId, items })
       })
       .catch(() => {
-        if (!cancelled) setTasks([])
+        if (!cancelled) setTaskData({ dealId, items: [] })
       })
     return () => {
       cancelled = true
     }
-  }, [open, deal?.id, deal])
+  }, [open, dealId])
 
   if (!deal) return null
 
@@ -85,13 +83,14 @@ export function DealDetailDrawer({
   const company = deal.clientName ?? deal.name
   const product = deal.clientName ? deal.name : null
   const amount = formatAmount(deal.value, deal.currency)
-  const currentStage = stages.find((s) => s.id === stageId)
+  const tasks = taskData && taskData.dealId === deal.id ? taskData.items : []
+  const currentStage = stages.find((s) => s.id === deal.funnelStageId)
   const stageClass = currentStage
     ? (STAGE_COLOR[currentStage.name] ?? STAGE_DEFAULT)
     : STAGE_DEFAULT
 
   function handleStageChange(nextStageId: string) {
-    if (!deal || nextStageId === stageId) return
+    if (!deal || nextStageId === deal.funnelStageId) return
     startTransition(async () => {
       try {
         const res = await fetch("/api/deals", {
@@ -109,7 +108,6 @@ export function DealDetailDrawer({
           toast.error(err.error || "Не удалось перевести сделку")
           return
         }
-        setStageId(nextStageId)
         const name = stages.find((s) => s.id === nextStageId)?.name
         toast.success(`Переведено: ${name ? dealStageLabel(name) : "этап"}`)
         onChanged()
@@ -175,7 +173,7 @@ export function DealDetailDrawer({
 
           <div className="pt-1">
             <Select
-              value={stageId}
+              value={deal.funnelStageId}
               onValueChange={handleStageChange}
               disabled={isPending || !isActive}
             >
