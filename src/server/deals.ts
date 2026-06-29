@@ -9,7 +9,9 @@ import {
   contact,
   user,
   dealStatus,
+  dealContactRole,
   type DealStatus,
+  type DealContactRole,
 } from "@/db/schema"
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm"
 import { getServerSession } from "@/lib/get-session"
@@ -539,3 +541,75 @@ export async function moveDealStage(
     .where(eq(deal.id, dealId))
 }
 
+export type DealContactWithRole = {
+  id: string
+  name: string
+  nameNative: string | null
+  position: string | null
+  email: string | null
+  role: DealContactRole | null
+}
+
+export async function listDealContactsWithRoles(
+  dealId: string,
+): Promise<DealContactWithRole[]> {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  const rows = await db
+    .select({
+      id: contact.id,
+      name: contact.name,
+      nameNative: contact.nameNative,
+      position: contact.position,
+      email: contact.email,
+      role: dealContact.role,
+    })
+    .from(dealContact)
+    .innerJoin(contact, eq(dealContact.contactId, contact.id))
+    .where(eq(dealContact.dealId, dealId))
+  return rows
+}
+
+export async function addDealContact(dealId: string, contactId: string) {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  await assertContactsInOrg([contactId], activeOrgId)
+  await db
+    .insert(dealContact)
+    .values({ dealId, contactId })
+    .onConflictDoNothing()
+}
+
+export async function setDealContactRole(
+  dealId: string,
+  contactId: string,
+  role: DealContactRole | null,
+) {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  if (role !== null && !dealContactRole.enumValues.includes(role)) {
+    throw new Error("Invalid contact role")
+  }
+  await db
+    .update(dealContact)
+    .set({ role })
+    .where(
+      and(
+        eq(dealContact.dealId, dealId),
+        eq(dealContact.contactId, contactId),
+      ),
+    )
+}
+
+export async function removeDealContact(dealId: string, contactId: string) {
+  const { activeOrgId } = await requireOrgContext()
+  await assertDealInOrg(dealId, activeOrgId)
+  await db
+    .delete(dealContact)
+    .where(
+      and(
+        eq(dealContact.dealId, dealId),
+        eq(dealContact.contactId, contactId),
+      ),
+    )
+}
