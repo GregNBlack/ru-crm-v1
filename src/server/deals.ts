@@ -496,14 +496,24 @@ export async function updateDeal(
   }
 
   // Replace-style contact membership update: delete the existing edges,
-  // insert the new set. Simpler than diffing; the cardinality here is small.
+  // insert the new set. Сохраняем назначенные роли существующих связей, чтобы
+  // редактирование сделки не обнуляло роли контактов.
   if (data.contactIds !== undefined) {
+    const existing = await db
+      .select({ contactId: dealContact.contactId, role: dealContact.role })
+      .from(dealContact)
+      .where(eq(dealContact.dealId, dealId))
+    const roleByContact = new Map(existing.map((e) => [e.contactId, e.role]))
     await db.delete(dealContact).where(eq(dealContact.dealId, dealId))
     const unique = Array.from(new Set(data.contactIds))
     if (unique.length > 0) {
-      await db
-        .insert(dealContact)
-        .values(unique.map((contactId) => ({ dealId, contactId })))
+      await db.insert(dealContact).values(
+        unique.map((contactId) => ({
+          dealId,
+          contactId,
+          role: roleByContact.get(contactId) ?? null,
+        })),
+      )
     }
   }
 }

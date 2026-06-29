@@ -23,11 +23,16 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/deals/${dealId}/contacts`)
-    const data = await res.json()
-    setContacts(data.contacts ?? [])
-    setOptions(data.options ?? [])
-    setLoading(false)
+    try {
+      const res = await fetch(`/api/deals/${dealId}/contacts`)
+      const data = await res.json()
+      setContacts(data.contacts ?? [])
+      setOptions(data.options ?? [])
+    } catch {
+      toast.error("Не удалось загрузить контакты")
+    } finally {
+      setLoading(false)
+    }
   }, [dealId])
 
   useEffect(() => {
