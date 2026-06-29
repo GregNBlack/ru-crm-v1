@@ -24,6 +24,7 @@ import type { TaskRow } from "@/app/api/tasks/route"
 import { dealStageLabel } from "@/lib/deal-funnel"
 import { STAGE_COLOR, STAGE_DEFAULT, formatAmount } from "@/lib/deal-board"
 import DealEditDialog from "@/components/forms/form-deal-edit"
+import { DealContactsRoles } from "@/components/blocks/deal-contacts-roles"
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("ru-RU", {
@@ -196,6 +197,7 @@ export function DealDetailDrawer({
         <Tabs defaultValue="summary" className="flex-1 min-h-0 flex flex-col">
           <TabsList className="mx-4 mt-3 w-fit">
             <TabsTrigger value="summary">Сводка</TabsTrigger>
+            <TabsTrigger value="contacts">Контакты</TabsTrigger>
             <TabsTrigger value="tasks">
               Задачи
               {tasks.length > 0 && (
@@ -238,6 +240,13 @@ export function DealDetailDrawer({
               Создано {formatDate(deal.createdAt)} · обновлено{" "}
               {formatDate(deal.updatedAt)}
             </div>
+          </TabsContent>
+
+          <TabsContent
+            value="contacts"
+            className="flex-1 min-h-0 overflow-y-auto p-4 text-sm"
+          >
+            <DealContactsRoles dealId={deal.id} />
           </TabsContent>
 
           <TabsContent
