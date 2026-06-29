@@ -51,6 +51,7 @@ import {
 } from "@/components/blocks/deal-move-dialog"
 import DealEditDialog from "@/components/forms/form-deal-edit"
 import { DiscoverDealsDialog } from "@/components/blocks/discover-deals-dialog"
+import { DealDetailDrawer } from "@/components/blocks/deal-detail-drawer"
 
 const ALL = "__all__"
 
@@ -58,10 +59,12 @@ function Column({
   stage,
   deals,
   onChanged,
+  onOpen,
 }: {
   stage: DealFunnelStageOption
   deals: DealRow[]
   onChanged: () => void
+  onOpen: (deal: DealRow) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
   const sum = deals.reduce((a, d) => a + dealAmount(d.value), 0)
@@ -89,7 +92,7 @@ function Column({
         }`}
       >
         {deals.map((d) => (
-          <DealKanbanCard key={d.id} deal={d} onChanged={onChanged} />
+          <DealKanbanCard key={d.id} deal={d} onChanged={onChanged} onOpen={onOpen} />
         ))}
       </div>
     </div>
@@ -115,6 +118,7 @@ export function DealsBoard({
   const [includeDeleted, setIncludeDeleted] = useState(false)
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [openDeal, setOpenDeal] = useState<DealRow | null>(null)
   const [isPending, startTransition] = useTransition()
 
   const sensors = useSensors(
@@ -333,6 +337,7 @@ export function DealsBoard({
               stage={stage}
               deals={dealsByStage(stage.id)}
               onChanged={router.refresh}
+              onOpen={setOpenDeal}
             />
           ))}
 
@@ -380,6 +385,15 @@ export function DealsBoard({
         pending={isPending}
         onConfirm={confirmMove}
         onCancel={() => setPendingMove(null)}
+      />
+      <DealDetailDrawer
+        deal={openDeal}
+        stages={stages}
+        open={openDeal !== null}
+        onOpenChange={(o) => {
+          if (!o) setOpenDeal(null)
+        }}
+        onChanged={() => router.refresh()}
       />
     </div>
   )

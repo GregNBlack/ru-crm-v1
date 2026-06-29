@@ -47,9 +47,11 @@ function DealMetaLine({ deal }: { deal: DealRow }) {
 export function DealKanbanCard({
   deal,
   onChanged,
+  onOpen,
 }: {
   deal: DealRow
   onChanged: () => void
+  onOpen: (deal: DealRow) => void
 }) {
   // Неактивные (отменённые/удалённые) сделки показываем приглушённо и НЕ даём
   // перетаскивать — перевод стадии только для активных.
@@ -67,6 +69,7 @@ export function DealKanbanCard({
       className={`p-3 space-y-2 bg-card border-muted ${
         isActive ? "cursor-grab active:cursor-grabbing" : "opacity-60"
       } ${isDragging ? "opacity-40" : ""}`}
+      onClick={() => onOpen(deal)}
     >
       <div className="flex items-start justify-between gap-2">
         <DealTitle deal={deal} />
@@ -81,6 +84,7 @@ export function DealKanbanCard({
               className="h-6 w-6 shrink-0"
               aria-label="Редактировать сделку"
               onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               <Pencil className="h-3.5 w-3.5" />
             </Button>
