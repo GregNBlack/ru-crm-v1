@@ -84,7 +84,7 @@ function Column({
       </div>
       <div
         ref={setNodeRef}
-        className={`flex flex-col gap-2 min-h-24 rounded-lg p-1 transition-colors ${
+        className={`flex flex-col gap-2 min-h-24 rounded-lg transition-colors ${
           isOver ? "outline outline-2 outline-dashed outline-primary" : ""
         }`}
       >
@@ -267,7 +267,7 @@ export function DealsBoard({
         <div className="flex items-center gap-3 flex-wrap rounded-lg border bg-card shadow-sm p-3">
           <div className="flex rounded-lg border overflow-hidden">
             <Button
-              variant={filter === "all" ? "secondary" : "ghost"}
+              variant={filter === "all" ? "default" : "ghost"}
               size="sm"
               className="rounded-none"
               onClick={() => setFilter("all")}
@@ -275,7 +275,7 @@ export function DealsBoard({
               Все
             </Button>
             <Button
-              variant={filter === "mine" ? "secondary" : "ghost"}
+              variant={filter === "mine" ? "default" : "ghost"}
               size="sm"
               className="rounded-none"
               onClick={() => setFilter("mine")}
