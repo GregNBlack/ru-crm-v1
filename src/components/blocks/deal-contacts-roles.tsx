@@ -21,6 +21,9 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
   const [contacts, setContacts] = useState<DealContactWithRole[]>([])
   const [options, setOptions] = useState<DealContactOption[]>([])
   const [loading, setLoading] = useState(true)
+  // Меняем key после добавления — пересоздаём Select, чтобы он сбросился
+  // (неконтролируемый, без value="" — иначе onValueChange не срабатывает).
+  const [addKey, setAddKey] = useState(0)
 
   const load = useCallback(async () => {
     try {
@@ -111,8 +114,9 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
-              aria-label="Убрать контакт"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              aria-label="Убрать контакт из сделки"
+              title="Убрать из сделки"
               onClick={() =>
                 mutate({ action: "remove", contactId: c.id }, "Контакт убран")
               }
@@ -123,13 +127,14 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
         </div>
       ))}
 
-      {options.length > 0 && (
-        <div className="pt-1">
+      <div className="pt-1">
+        {options.length > 0 ? (
           <Select
-            value=""
-            onValueChange={(contactId) =>
+            key={addKey}
+            onValueChange={(contactId) => {
+              setAddKey((k) => k + 1)
               mutate({ action: "add", contactId }, "Контакт добавлен")
-            }
+            }}
           >
             <SelectTrigger size="sm" className="w-full">
               <span className="flex items-center gap-1 text-muted-foreground">
@@ -145,8 +150,12 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
               ))}
             </SelectContent>
           </Select>
-        </div>
-      )}
+        ) : (
+          <div className="text-xs text-muted-foreground">
+            Нет других контактов клиента для добавления.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
