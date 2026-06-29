@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { Plus, X } from "lucide-react"
+import { X } from "lucide-react"
 import { toast } from "sonner"
 import type { DealContactWithRole } from "@/app/api/deals/[id]/contacts/route"
 import type { DealContactOption } from "@/app/api/deals/route"
@@ -136,11 +136,8 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
               mutate({ action: "add", contactId }, "Контакт добавлен")
             }}
           >
-            <SelectTrigger size="sm" className="w-full">
-              <span className="flex items-center gap-1 text-muted-foreground">
-                <Plus className="h-4 w-4" />
-                Добавить контакт
-              </span>
+            <SelectTrigger size="sm" className="w-full text-muted-foreground">
+              <SelectValue placeholder="+ Добавить контакт" />
             </SelectTrigger>
             <SelectContent>
               {options.map((o) => (
