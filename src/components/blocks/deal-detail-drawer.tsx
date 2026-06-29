@@ -119,9 +119,10 @@ export function DealDetailDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md flex flex-col gap-0 p-0">
+      <SheetContent className="w-full sm:max-w-xl flex flex-col gap-0 p-0">
         <SheetHeader className="p-4 pb-3 border-b">
-          <div className="flex items-start justify-between gap-2">
+          {/* pr-8 — чтобы кнопка «Редактировать» не залезала под крестик закрытия */}
+          <div className="flex items-start justify-between gap-2 pr-8">
             <div className="min-w-0">
               <SheetTitle className="truncate">{company}</SheetTitle>
               {product && (
