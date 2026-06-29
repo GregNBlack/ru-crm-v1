@@ -28,6 +28,7 @@ export function DealProvenance({ deal }: { deal: DealRow }) {
         <button
           type="button"
           onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
           aria-label="Происхождение изменения"
         >
           <Badge
