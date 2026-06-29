@@ -122,6 +122,10 @@ export function DealsBoard({
   // всегда показывает актуальные данные после refresh (редактирование, перевод
   // стадии с другой карточки и т.п.), без устаревшего снимка.
   const [openDealId, setOpenDealId] = useState<string | null>(null)
+  // Открытость drawer развязана с выбранной сделкой: при закрытии гасим
+  // drawerOpen, но openDealId сохраняем — чтобы deal оставался смонтированным
+  // на время exit-анимации Sheet (иначе закрытие происходит без анимации).
+  const [drawerOpen, setDrawerOpen] = useState(false)
   // Гасим клик-после-перетаскивания: dnd-kit может породить синтетический click
   // после короткого drag — не открываем drawer в этом случае.
   const justDraggedRef = useRef(false)
@@ -355,6 +359,7 @@ export function DealsBoard({
               onOpen={(d) => {
                 if (justDraggedRef.current) return
                 setOpenDealId(d.id)
+                setDrawerOpen(true)
               }}
             />
           ))}
@@ -407,10 +412,8 @@ export function DealsBoard({
       <DealDetailDrawer
         deal={openDeal}
         stages={stages}
-        open={openDeal !== null}
-        onOpenChange={(o) => {
-          if (!o) setOpenDealId(null)
-        }}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
         onChanged={() => router.refresh()}
       />
     </div>
