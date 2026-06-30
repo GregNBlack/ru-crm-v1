@@ -66,7 +66,8 @@ type Props = {
   mode: "create" | "edit"
   contact?: ContactRow
   trigger: React.ReactNode
-  onSuccess?: () => void
+  onSuccess?: (createdId?: string) => void
+  defaultClientId?: string
 }
 
 export default function ContactEditDialog({
@@ -74,6 +75,7 @@ export default function ContactEditDialog({
   contact,
   trigger,
   onSuccess,
+  defaultClientId,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -87,7 +89,10 @@ export default function ContactEditDialog({
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
-      clientId: contact?.clientId ?? NO_CLIENT,
+      clientId:
+        mode === "create"
+          ? (defaultClientId ?? NO_CLIENT)
+          : (contact?.clientId ?? NO_CLIENT),
       status: contact?.status ?? "active",
     },
   })
@@ -101,7 +106,10 @@ export default function ContactEditDialog({
       phone: contact?.phone ?? "",
       email: contact?.email ?? "",
       position: contact?.position ?? "",
-      clientId: contact?.clientId ?? NO_CLIENT,
+      clientId:
+        mode === "create"
+          ? (defaultClientId ?? NO_CLIENT)
+          : (contact?.clientId ?? NO_CLIENT),
       status: contact?.status ?? "active",
     })
     let cancelled = false
@@ -115,7 +123,7 @@ export default function ContactEditDialog({
     return () => {
       cancelled = true
     }
-  }, [open, contact, form])
+  }, [open, contact, form, mode, defaultClientId])
 
   const onSubmit = (data: ContactFormData) => {
     startTransition(async () => {
@@ -139,8 +147,9 @@ export default function ContactEditDialog({
           toast.error(err.error || "Не удалось сохранить контакт")
           return
         }
+        const json = await res.json().catch(() => ({}))
         toast.success(mode === "create" ? "Контакт создан" : "Контакт обновлён")
-        onSuccess?.()
+        onSuccess?.(json?.id)
         setOpen(false)
       } catch {
         toast.error("Не удалось сохранить контакт")

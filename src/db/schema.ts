@@ -302,6 +302,19 @@ export const dealStatus = pgEnum("deal_status", [
 
 export type DealStatus = (typeof dealStatus.enumValues)[number]
 
+export const dealContactRole = pgEnum("deal_contact_role", [
+  "decision_maker",
+  "influencer",
+  "expert",
+  "initiator",
+  "economic_buyer",
+  "champion",
+  "blocker",
+  "user",
+  "gatekeeper",
+])
+export type DealContactRole = (typeof dealContactRole.enumValues)[number]
+
 export const client = pgTable(
   "client",
   {
@@ -578,6 +591,7 @@ export const dealContact = pgTable(
     contactId: text("contact_id")
       .notNull()
       .references(() => contact.id, { onDelete: "cascade" }),
+    role: dealContactRole("role"),
   },
   (table) => [
     primaryKey({ columns: [table.dealId, table.contactId] }),

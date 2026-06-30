@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useEffect, useMemo } from "react"
+import { useState, useTransition, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import {
   Dialog,
@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/blocks/loading-button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -35,7 +34,6 @@ import { toast } from "sonner"
 import type {
   DealRow,
   DealClientOption,
-  DealContactOption,
   DealFunnelStageOption,
 } from "@/app/api/deals/route"
 import type { DealStatus } from "@/db/schema"
@@ -58,10 +56,6 @@ type DealFormData = {
   value: string
   currency: string
   status: DealStatus
-  // Multi-select kept inside the form state so the dialog's open-effect
-  // can reset everything via a single `form.reset(...)` call — separate
-  // useState here triggers a cascading-render lint error.
-  contactIds: string[]
 }
 
 type Props = {
@@ -80,7 +74,6 @@ export default function DealEditDialog({
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [clientOptions, setClientOptions] = useState<DealClientOption[]>([])
-  const [contactOptions, setContactOptions] = useState<DealContactOption[]>([])
   const [stageOptions, setStageOptions] = useState<DealFunnelStageOption[]>([])
 
   const form = useForm<DealFormData>({
@@ -92,24 +85,15 @@ export default function DealEditDialog({
       value: deal?.value ?? "",
       currency: deal?.currency ?? "EUR",
       status: deal?.status ?? "active",
-      contactIds: deal?.contacts.map((c) => c.id) ?? [],
     },
   })
-
-  const watchedContactIds = form.watch("contactIds")
-  const watchedClientId = form.watch("clientId")
-  const selectedContactIds = useMemo(
-    () => new Set(watchedContactIds),
-    [watchedContactIds],
-  )
 
   // Open effect: fetch clients + funnel stages, THEN reset the form with
   // the default stage already baked in. Doing one final `form.reset` (vs.
   // an early reset + a later `setValue`) keeps the funnel-stage value and
   // its matching SelectItem in the same render commit — Radix Select
   // doesn't reliably pick up a value change when the item set lags by one
-  // commit. Contacts are NOT fetched here — they're scoped to the chosen
-  // client and loaded by the separate effect below as `clientId` changes.
+  // commit.
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -139,7 +123,6 @@ export default function DealEditDialog({
           value: deal?.value ?? "",
           currency: deal?.currency ?? "RUB",
           status: deal?.status ?? "active",
-          contactIds: deal?.contacts.map((c) => c.id) ?? [],
         })
       } catch {}
     })()
@@ -147,69 +130,6 @@ export default function DealEditDialog({
       cancelled = true
     }
   }, [open, deal, form, mode])
-
-  // Contacts are scoped to the selected client. When no client is picked,
-  // the list is empty and any previously-selected contact ids are cleared.
-  // When the client changes, drop any contact ids that don't belong to the
-  // new client (defensive — covers the rare case of editing a deal whose
-  // legacy contacts were attached cross-client).
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    ;(async () => {
-      if (!watchedClientId) {
-        if (cancelled) return
-        setContactOptions([])
-        if (form.getValues("contactIds").length > 0) {
-          form.setValue("contactIds", [])
-        }
-        return
-      }
-      try {
-        const res = await fetch(
-          `/api/deals?contactOptions=1&clientId=${encodeURIComponent(watchedClientId)}`,
-        ).then((r) => r.json())
-        if (cancelled) return
-        const options: DealContactOption[] = res.options ?? []
-        setContactOptions(options)
-        const valid = new Set(options.map((o) => o.id))
-        const current = form.getValues("contactIds")
-        const filtered = current.filter((id) => valid.has(id))
-        if (filtered.length !== current.length) {
-          form.setValue("contactIds", filtered)
-        }
-      } catch {}
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [open, watchedClientId, form])
-
-  const toggleContact = (id: string) => {
-    const current = form.getValues("contactIds")
-    const next = current.includes(id)
-      ? current.filter((x) => x !== id)
-      : [...current, id]
-    form.setValue("contactIds", next, { shouldDirty: true })
-  }
-
-  const orderedContactOptions = useMemo(() => {
-    // Selected contacts at the top so the picked set is always visible
-    // even when the list is long.
-    const selected: DealContactOption[] = []
-    const rest: DealContactOption[] = []
-    for (const c of contactOptions) {
-      if (selectedContactIds.has(c.id)) selected.push(c)
-      else rest.push(c)
-    }
-    return [...selected, ...rest]
-  }, [contactOptions, selectedContactIds])
-
-  const clientNameById = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const c of clientOptions) map.set(c.id, c.name)
-    return map
-  }, [clientOptions])
 
   const onSubmit = (data: DealFormData) => {
     startTransition(async () => {
@@ -227,7 +147,6 @@ export default function DealEditDialog({
                 description: data.description,
                 funnelStageId: data.funnelStageId,
                 clientId: data.clientId,
-                contactIds: data.contactIds,
                 value: numericValue,
                 currency: data.currency,
               }
@@ -237,7 +156,6 @@ export default function DealEditDialog({
                 description: data.description,
                 funnelStageId: data.funnelStageId,
                 clientId: data.clientId,
-                contactIds: data.contactIds,
                 value: numericValue,
                 currency: data.currency,
                 status: data.status,
@@ -414,47 +332,14 @@ export default function DealEditDialog({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label className="text-gray-400">Контакты</Label>
-              {!watchedClientId ? (
-                <div className="text-xs text-muted-foreground">
-                  Выберите клиента, чтобы выбрать контакты.
+            {mode === "edit" && !!deal?.contacts?.length && (
+              <div className="space-y-2">
+                <Label className="text-gray-400">Инициатор</Label>
+                <div className="text-sm">
+                  {deal.contacts.map((c) => c.name).join(", ")}
                 </div>
-              ) : orderedContactOptions.length === 0 ? (
-                <div className="text-xs text-muted-foreground">
-                  К этому клиенту ещё не привязаны контакты.
-                </div>
-              ) : (
-                <div className="max-h-44 overflow-y-auto rounded-md border border-input bg-background dark:bg-muted/30 p-2 space-y-1">
-                  {orderedContactOptions.map((c) => {
-                    const checked = selectedContactIds.has(c.id)
-                    const linkedClient = c.clientId
-                      ? clientNameById.get(c.clientId)
-                      : null
-                    return (
-                      <label
-                        key={c.id}
-                        className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => toggleContact(c.id)}
-                        />
-                        <span className="flex-1 truncate">{c.name}</span>
-                        {linkedClient && (
-                          <span className="text-xs text-muted-foreground truncate">
-                            {linkedClient}
-                          </span>
-                        )}
-                      </label>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="text-xs text-muted-foreground">
-                Выбрано: {selectedContactIds.size}
               </div>
-            </div>
+            )}
 
             {mode === "edit" && (
               <FormField
