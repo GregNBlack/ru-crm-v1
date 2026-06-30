@@ -137,7 +137,7 @@ export default function DealEditDialog({
         const trimmedValue = data.value.trim()
         const numericValue = trimmedValue === "" ? null : Number(trimmedValue)
         if (numericValue !== null && !Number.isFinite(numericValue)) {
-          toast.error("Стоимость должна быть числом")
+          toast.error("Сумма должна быть числом")
           return
         }
         const payload =
@@ -290,7 +290,7 @@ export default function DealEditDialog({
                 name="value"
                 render={({ field }) => (
                   <FormItem className="col-span-2">
-                    <FormLabel className="text-gray-400">Стоимость</FormLabel>
+                    <FormLabel className="text-gray-400">Сумма</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
