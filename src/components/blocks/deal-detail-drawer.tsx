@@ -194,10 +194,8 @@ export function DealDetailDrawer({
           </div>
         </SheetHeader>
 
-        <Tabs defaultValue="summary" className="flex-1 min-h-0 flex flex-col">
+        <Tabs defaultValue="tasks" className="flex-1 min-h-0 flex flex-col">
           <TabsList className="mx-4 mt-3 w-fit">
-            <TabsTrigger value="summary">Сводка</TabsTrigger>
-            <TabsTrigger value="contacts">Контакты</TabsTrigger>
             <TabsTrigger value="tasks">
               Задачи
               {tasks.length > 0 && (
@@ -206,40 +204,48 @@ export function DealDetailDrawer({
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="chronology">Хронология</TabsTrigger>
+            <TabsTrigger value="contacts">Контакты</TabsTrigger>
           </TabsList>
 
           <TabsContent
-            value="summary"
-            className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-sm"
+            value="chronology"
+            className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2 text-sm"
           >
-            {deal.description && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-                  Описание
+            {(() => {
+              const events: { date: string; text: string; meta?: string }[] = []
+              if (deal.changes) {
+                events.push({
+                  date: deal.updatedAt,
+                  text: deal.changes,
+                  meta: "изменение",
+                })
+              }
+              for (const t of tasks) {
+                events.push({
+                  date: t.dueDate,
+                  text: t.name,
+                  meta: `задача · ${t.status}`,
+                })
+              }
+              events.push({ date: deal.createdAt, text: "Сделка создана" })
+              events.sort((a, b) => b.date.localeCompare(a.date))
+              return events.length === 0 ? (
+                <div className="text-muted-foreground">
+                  Пока нет событий по сделке.
                 </div>
-                <p className="whitespace-pre-wrap">{deal.description}</p>
-              </div>
-            )}
-            {deal.changes && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-                  Изменение
-                </div>
-                <p className="whitespace-pre-wrap">{deal.changes}</p>
-              </div>
-            )}
-            {deal.reasoning && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-                  Обоснование
-                </div>
-                <p className="whitespace-pre-wrap">{deal.reasoning}</p>
-              </div>
-            )}
-            <div className="text-xs text-muted-foreground pt-2 border-t">
-              Создано {formatDate(deal.createdAt)} · обновлено{" "}
-              {formatDate(deal.updatedAt)}
-            </div>
+              ) : (
+                events.map((e, i) => (
+                  <div key={i} className="border-l-2 pl-3 pb-1">
+                    <div className="text-xs text-muted-foreground">
+                      {formatDate(e.date)}
+                      {e.meta ? ` · ${e.meta}` : ""}
+                    </div>
+                    <div className="whitespace-pre-wrap">{e.text}</div>
+                  </div>
+                ))
+              )
+            })()}
           </TabsContent>
 
           <TabsContent
