@@ -9,15 +9,16 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { X } from "lucide-react"
+import { UserPlus, X } from "lucide-react"
 import { toast } from "sonner"
 import type { DealContactWithRole } from "@/app/api/deals/[id]/contacts/route"
 import type { DealContactOption } from "@/app/api/deals/route"
 import { DEAL_CONTACT_ROLES, dealContactRoleLabel } from "@/lib/deal-roles"
+import ContactEditDialog from "@/components/forms/form-contact-edit"
 
 const NO_ROLE = "__none__"
 
-export function DealContactsRoles({ dealId }: { dealId: string }) {
+export function DealContactsRoles({ dealId, clientId }: { dealId: string; clientId: string | null }) {
   const [contacts, setContacts] = useState<DealContactWithRole[]>([])
   const [options, setOptions] = useState<DealContactOption[]>([])
   const [loading, setLoading] = useState(true)
@@ -152,6 +153,29 @@ export function DealContactsRoles({ dealId }: { dealId: string }) {
             Нет других контактов клиента для добавления.
           </div>
         )}
+        <ContactEditDialog
+          mode="create"
+          defaultClientId={clientId ?? undefined}
+          onSuccess={(createdId) => {
+            if (createdId) {
+              mutate(
+                { action: "add", contactId: createdId },
+                "Контакт создан и добавлен",
+              )
+            } else {
+              load()
+            }
+          }}
+          trigger={
+            <button
+              type="button"
+              className="mt-2 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <UserPlus className="h-4 w-4" />
+              Создать контакт
+            </button>
+          }
+        />
       </div>
     </div>
   )

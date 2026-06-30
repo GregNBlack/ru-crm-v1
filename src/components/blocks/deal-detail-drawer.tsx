@@ -252,7 +252,7 @@ export function DealDetailDrawer({
             value="contacts"
             className="flex-1 min-h-0 overflow-y-auto p-4 text-sm"
           >
-            <DealContactsRoles dealId={deal.id} />
+            <DealContactsRoles dealId={deal.id} clientId={deal.clientId} />
           </TabsContent>
 
           <TabsContent
